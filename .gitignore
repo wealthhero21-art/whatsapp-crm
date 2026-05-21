@@ -1,0 +1,22 @@
+node_modules
+dist
+build
+.DS_Store
+*.log
+*.tsbuildinfo
+
+# env files — never commit real secrets
+.env
+.env.*
+!.env.example
+!deploy/.env.prod.example
+
+# Local storage
+apps/backend/storage/
+
+# IDE
+.vscode
+.idea
+
+# Distributable archives we don't need in git
+whatsapp-crm.zip

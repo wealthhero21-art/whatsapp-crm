@@ -1,0 +1,19 @@
+{
+  "name": "whatsapp-crm",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "db:migrate": "pnpm --filter @crm/backend run db:migrate",
+    "db:seed": "pnpm --filter @crm/backend run db:seed",
+    "lint": "pnpm -r run lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.3"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20"
+  }
+}
