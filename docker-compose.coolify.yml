@@ -69,6 +69,11 @@ services:
     networks:
       - default
       - coolify
+    # Coolify's auto-generated routing labels omit traefik.docker.network,
+    # so Traefik picks the first attached network — sometimes the per-app
+    # one, which Traefik isn't on → Bad Gateway. Pin it to coolify.
+    labels:
+      - traefik.docker.network=coolify
 
 volumes:
   docs:
