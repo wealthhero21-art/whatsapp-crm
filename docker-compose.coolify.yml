@@ -4,14 +4,14 @@
 #   - builds backend + frontend images using the repo's Dockerfiles
 #   - injects env vars from the Coolify UI (NOT from any .env file in the repo)
 #   - attaches a persistent volume for /var/crm/docs
-#   - proxies the public domain (crm.maximoney.in) to the `frontend` service
-#     via Traefik
+#   - proxies the public domain to the `frontend` service via Traefik
 #
 # Shared Postgres lives outside this compose (see shared-infra.md) and is
 # reachable on the `coolify` Docker network using its container name as host.
 #
-# Redis is per-app and runs inside this compose (one less moving piece to
-# share-vs-isolate).
+# Note on the cache service name: we deliberately don't call it `redis` because
+# Coolify's own `coolify-redis` (on the shared `coolify` network) is aliased
+# as `redis` — would shadow ours when the backend joins both networks.
 
 services:
   backend:
@@ -21,14 +21,14 @@ services:
     restart: unless-stopped
     environment:
       # DATABASE_URL, JWT_SECRET, WHATSAPP_* etc. all come from Coolify env.
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://cache:6379
       DISK_STORAGE_PATH: /var/crm/docs
       HOST: 0.0.0.0
       PORT: '4000'
     volumes:
       - docs:/var/crm/docs
     depends_on:
-      - redis
+      - cache
     # Attach to both the per-app network (default) and the shared `coolify`
     # network so the shared Postgres is reachable by its container hostname.
     networks:
@@ -37,12 +37,12 @@ services:
     # Migrate on every boot. schema_migrations dedupes already-applied files.
     command: ["/bin/sh", "-c", "node dist/db/migrate.js && node dist/server.js"]
 
-  redis:
+  cache:
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - redis_data:/data
+      - cache_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -61,9 +61,8 @@ services:
       - backend
 
 volumes:
-  # Coolify maps this to a persistent host path under /data/coolify/applications/<uuid>/...
   docs:
-  redis_data:
+  cache_data:
 
 networks:
   default:
