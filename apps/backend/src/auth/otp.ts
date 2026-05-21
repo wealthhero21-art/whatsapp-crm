@@ -17,6 +17,12 @@ function generateCode(): string {
  * and persist the hash. Enforces a resend cooldown.
  */
 export async function issueOtp(phoneE164: string): Promise<{ sent: boolean; cooldownRemaining?: number }> {
+  // DEV bypass — accept any login, no Meta call. The verify step will let
+  // through DEV_OTP_BYPASS_CODE, so we don't even need to persist a row.
+  if (config.DEV_OTP_BYPASS_CODE) {
+    return { sent: true };
+  }
+
   // Cooldown: refuse if the previous unconsumed OTP for this phone is younger than the window.
   const recent = await query<{ created_at: Date }>(
     `SELECT created_at FROM otp_codes
@@ -56,6 +62,13 @@ export interface OtpVerifyResult {
 }
 
 export async function verifyOtp(phoneE164: string, code: string): Promise<OtpVerifyResult> {
+  // DEV bypass — accept the configured code for any phone. The caller still
+  // checks that the phone belongs to a registered+active user, so a random
+  // phone can't log in even with the bypass.
+  if (config.DEV_OTP_BYPASS_CODE && code === config.DEV_OTP_BYPASS_CODE) {
+    return { ok: true };
+  }
+
   const { rows } = await query<{
     id: string;
     code_hash: string;

@@ -66,6 +66,13 @@ startWorkers();
 try {
   await app.listen({ port: config.PORT, host: config.HOST });
   app.log.info(`🚀 WhatsApp CRM backend on http://${config.HOST}:${config.PORT}`);
+  if (config.DEV_OTP_BYPASS_CODE) {
+    app.log.warn(
+      '⚠️  DEV_OTP_BYPASS_CODE is set — login is INSECURE. ' +
+      'Anyone with a registered phone can log in using the bypass code. ' +
+      'Unset this env var the moment Meta credentials are wired in.'
+    );
+  }
 } catch (err) {
   app.log.error(err);
   process.exit(1);

@@ -27,6 +27,11 @@ const schema = z.object({
   OTP_MAX_ATTEMPTS: z.coerce.number().default(5),
   OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().default(60),
 
+  // DEV-ONLY escape hatch: if set, this code logs in any registered + active
+  // user without going through Meta. Used during initial setup before the
+  // login_otp template is approved. ALWAYS unset in real production.
+  DEV_OTP_BYPASS_CODE: z.string().optional(),
+
   // JWT
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 chars'),
   JWT_TTL_SECONDS: z.coerce.number().default(60 * 60 * 12),
