@@ -54,24 +54,16 @@ services:
       context: .
       dockerfile: apps/frontend/Dockerfile
     restart: unless-stopped
-    # Coolify-Traefik routes the configured domain to this container.
-    # FRONTEND_HOST is a bare host (no scheme, no slash) set in Coolify env.
-    # Swap that single var to move from the sslip.io placeholder to the
-    # real subdomain (crm.maximoney.in) without touching this file.
+    # Coolify magic: referencing SERVICE_FQDN_<SERVICE>_<PORT> in the
+    # environment block tells Coolify to auto-generate Traefik routing for
+    # the application's FQDN (set on the application's domains field) onto
+    # this service+port. Value is the URL path prefix the routes serve.
+    environment:
+      SERVICE_FQDN_FRONTEND_8080: /
     expose:
       - "8080"
     depends_on:
       - backend
-    networks:
-      - default
-      - coolify
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=coolify
-      - traefik.http.routers.crm-frontend.rule=Host(`${FRONTEND_HOST}`)
-      - traefik.http.routers.crm-frontend.entrypoints=http
-      - traefik.http.routers.crm-frontend.service=crm-frontend
-      - traefik.http.services.crm-frontend.loadbalancer.server.port=8080
 
 volumes:
   docs:
