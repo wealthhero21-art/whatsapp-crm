@@ -54,16 +54,21 @@ services:
       context: .
       dockerfile: apps/frontend/Dockerfile
     restart: unless-stopped
-    # Coolify magic: referencing SERVICE_FQDN_<SERVICE>_<PORT> in the
-    # environment block tells Coolify to auto-generate Traefik routing for
-    # the application's FQDN (set on the application's domains field) onto
-    # this service+port. Value is the URL path prefix the routes serve.
+    # Coolify magic: referencing SERVICE_FQDN_<SERVICE>_<PORT> tells Coolify
+    # to auto-generate Traefik routing for the per-service domain set via
+    # the application's docker_compose_domains.
     environment:
       SERVICE_FQDN_FRONTEND_8080: /
     expose:
       - "8080"
     depends_on:
       - backend
+    # Must be on the coolify network so coolify-proxy (Traefik) can reach
+    # us. We also keep the default per-app network so we can talk to backend
+    # by its compose service name.
+    networks:
+      - default
+      - coolify
 
 volumes:
   docs:
