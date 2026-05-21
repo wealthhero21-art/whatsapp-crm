@@ -1,209 +1,174 @@
-# Deploying to Contabo (production)
+# Deploying to Coolify
 
-End-to-end playbook for `crm.maximoney.in`.
+End-to-end playbook for `crm.maximoney.in` on the shared Contabo server.
 
 ```
-GitHub repo  ──push to main──►  GH Actions  ──build images──►  GHCR
-                                     │
-                                     │ ssh + git pull + compose up
-                                     ▼
-                              Contabo VPS (India)
-                              ├── caddy   (TLS, static SPA, proxy)
-                              ├── backend (node)
-                              ├── postgres
-                              ├── redis
-                              └── /var/crm/docs   ← all documents on NVMe
-                                                    ↓
-                                       Hetzner Storage Box (Germany)
-                                       └── backups/postgres + backups/docs
-                                          (rclone SFTP, nightly, 30d retention)
+GitHub push to main
+   │
+   ▼  webhook (Coolify "Deploy on push" toggle)
+┌─────────────────────────────────────────────────────────────┐
+│  Coolify on Contabo Mumbai (217.216.58.194)                │
+│                                                              │
+│  Traefik  ◄── crm.maximoney.in  ──TLS via Let's Encrypt──┐  │
+│      │                                                    │  │
+│      ▼                                                       │
+│  frontend (caddy:8080)  ──/api/* /auth/* /webhook/*──┐      │
+│      static SPA                                       ▼      │
+│                                                  backend(:4000)
+│                                                       │      │
+│                                                       ▼      │
+│                                                redis (per-app)
+│                                                              │
+│                                          shared postgres  ───┘
+│                                          (coolify network)   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-You'll provision four things: **GitHub repo**, **Contabo VPS**, **Hetzner Storage Box**, **Meta WhatsApp**.
+See [`shared-infra.md`](shared-infra.md) for the underlying server, Coolify install, shared Postgres, and conventions.
 
 ---
 
-## 1. GitHub — repo + Actions secrets
+## What gets deployed
 
-1. Create a new **private** repo: `maximoney/whatsapp-crm`.
-2. Push the existing code:
-   ```bash
-   git remote add origin git@github.com:maximoney/whatsapp-crm.git
-   git push -u origin main
-   ```
-3. Generate a deploy SSH keypair (one-off, on your laptop):
-   ```bash
-   ssh-keygen -t ed25519 -f ~/.ssh/crm_deploy -N ""
-   ```
-4. In the GitHub repo → Settings → Secrets and variables → Actions → New repository secret. Add:
+`docker-compose.coolify.yml` defines three services:
 
-   | Secret name | Value |
-   |---|---|
-   | `DEPLOY_HOST` | Contabo VPS public IP |
-   | `DEPLOY_USER` | `deploy` |
-   | `DEPLOY_SSH_KEY` | contents of `~/.ssh/crm_deploy` (private key) |
-   | `DEPLOY_PORT` | `22` |
-   | `GHCR_PAT` | a GitHub Personal Access Token with `read:packages` so the server can pull private images |
-
----
-
-## 2. Contabo — provision the VPS
-
-### 2a. Order
-
-- Plan: **VPS S Cloud** (4 vCPU / 8 GB / 200 GB NVMe) or larger
-- Region: India
-- OS: Ubuntu 24.04 LTS (or 22.04)
-- Contabo emails root password once provisioned
-
-### 2b. Bootstrap
-
-SSH in as root and run the bootstrap with the deploy public key from step 1:
-
-```bash
-ssh root@<server-ip>
-
-# Paste the bootstrap.sh contents into /tmp/bootstrap.sh — easiest if the
-# repo is private. Then:
-DEPLOY_PUBKEY="ssh-ed25519 AAAA... your-deploy-pubkey" bash /tmp/bootstrap.sh
-```
-
-This installs Docker, ufw, fail2ban, creates the `deploy` user, sets up `/var/crm/docs` with the right owner (uid 999 — the backend container's user), and hardens SSH.
-
-### 2c. Clone the repo + drop in env
-
-```bash
-sudo -u deploy git clone git@github.com:maximoney/whatsapp-crm.git /opt/crm
-# (or use HTTPS with a GitHub deploy token if you didn't add an SSH key)
-
-sudo -u deploy cp /opt/crm/deploy/.env.prod.example /opt/crm/.env.prod
-sudo chmod 600 /opt/crm/.env.prod
-sudo nano /opt/crm/.env.prod    # fill in everything
-```
-
-Generate the secrets once:
-```bash
-openssl rand -hex 24     # POSTGRES_PASSWORD
-openssl rand -hex 16     # WEBHOOK_VERIFY_TOKEN
-openssl rand -hex 32     # JWT_SECRET
-```
-
-### 2d. Install rclone + backup cron
-
-```bash
-sudo bash /opt/crm/deploy/scripts/install-backup-cron.sh
-```
-
-### 2e. Point DNS at the box
-
-In your DNS provider, add an A record:
-```
-crm.maximoney.in.    A    <server-ip>    (TTL 300)
-```
-
-Wait for it to resolve (`dig crm.maximoney.in`). Caddy needs DNS to work before it can fetch a Let's Encrypt cert.
-
----
-
-## 3. Hetzner Storage Box (offsite backups)
-
-1. https://accounts.hetzner.com → Storage Box → Order
-2. Plan: **BX11** (1 TB, ~€3.85/month). Single Storage Box, no need for snapshots.
-3. Hetzner emails the connection details. You'll see:
-   - Host: `uXXXXXX.your-storagebox.de`
-   - Username: `uXXXXXX`
-   - Password: shown once in the Hetzner Robot UI
-
-4. **In the Hetzner Robot UI for this Storage Box**, enable:
-   - ✓ External reachability
-   - ✓ SSH support
-   - ✓ Reset to a strong password you choose
-
-5. Drop these into `.env.prod` on the Contabo box:
-   ```
-   HETZNER_SB_HOST=uXXXXXX.your-storagebox.de
-   HETZNER_SB_USER=uXXXXXX
-   HETZNER_SB_PASSWORD=<your password>
-   HETZNER_SB_PORT=23
-   ```
-
-6. Test the backup right away:
-   ```bash
-   sudo bash /opt/crm/deploy/scripts/backup.sh
-   ```
-   Should finish in under a minute and you should see `backups/postgres/*.sql.gz` in the Hetzner Storage Box web UI.
-
----
-
-## 4. Meta — WhatsApp Cloud API
-
-Follow [`SETUP_META.md`](SETUP_META.md) for the full walkthrough. Specifically you need:
-
-- Per brand number: a System-User permanent access token, phone number ID, WABA ID, app secret.
-- A `login_otp` template **approved by Meta**:
-  - Category: AUTHENTICATION
-  - Body: e.g. `Your CRM verification code is {{1}}. It expires in 5 minutes.`
-  - Without this, no one can log in.
-- Subscribe the `messages` webhook field. Callback URL: `https://crm.maximoney.in/webhook/whatsapp`. Verify token: same as `WEBHOOK_VERIFY_TOKEN` in `.env.prod`.
-
-Drop the credentials into `.env.prod`, then `docker compose restart backend`.
-
----
-
-## 5. First deploy
-
-The cleanest first deploy is via the CI pipeline:
-
-```bash
-# From your laptop
-git push origin main
-```
-
-GitHub Actions will:
-1. Type-check both apps.
-2. Build backend + frontend images and push to `ghcr.io/<owner>/<repo>/{backend,frontend}`.
-3. SSH into the server, `git pull`, `docker compose pull`, `docker compose up -d`.
-
-Caddy starts and fetches a Let's Encrypt cert on first HTTPS request to `crm.maximoney.in` (5–30 seconds).
-
-### Seed the first admin (once)
-
-```bash
-ssh deploy@<server-ip>
-cd /opt/crm
-docker compose -f docker-compose.prod.yml --env-file .env.prod \
-  exec backend node dist/db/seed.js
-```
-
-Then open https://crm.maximoney.in/login, enter the bootstrap admin phone, and you'll receive an OTP on WhatsApp.
-
----
-
-## 6. Day-to-day operations
-
-| Action | Command |
+| Service | What it does |
 |---|---|
-| Ship code | `git push origin main` (CI does the rest) |
-| View logs | `ssh deploy@…  && docker compose -f /opt/crm/docker-compose.prod.yml logs -f backend` |
-| Restart | `docker compose -f /opt/crm/docker-compose.prod.yml restart backend` |
-| Manual migration | `docker compose … exec backend node dist/db/migrate.js` |
-| Test backup | `sudo bash /opt/crm/deploy/scripts/backup.sh` |
-| Check backup log | `tail -f /var/log/crm-backup.log` |
-| Restore DB from backup | `gunzip < dump.sql.gz \| docker compose … exec -T postgres psql -U crm whatsapp_crm` |
-| Postgres shell | `docker compose … exec postgres psql -U crm whatsapp_crm` |
-| Add new brand WA number | Admin UI → WhatsApp numbers → Add (no redeploy needed) |
-| Add new user | Admin UI → Users (no redeploy needed) |
-| Rotate JWT_SECRET | Edit `.env.prod` → `docker compose … up -d backend` (logs everyone out) |
+| **backend** | Fastify API. Runs migrations on startup. Connects to shared Postgres + local redis. Stores docs in a Coolify-managed persistent volume at `/var/crm/docs`. |
+| **redis** | Per-app BullMQ queue + cache. |
+| **frontend** | Caddy serving the built SPA on `:8080`. Reverse-proxies `/api/*`, `/auth/*`, `/webhook/*` to the backend. Traefik points at this. |
+
+Public Postgres + TLS + domain routing are handled by the shared layer (see `shared-infra.md`).
 
 ---
 
-## What to send me to finish setup
+## First-time setup
 
-1. **GitHub:** repo URL + a Personal Access Token (`repo` + `workflow` scope) so I can push code and add Actions secrets.
-2. **Contabo:** server IP + root password (one-time, to run bootstrap; I'll then operate as the `deploy` user).
-3. **Hetzner Storage Box:** host, user, password (after you order one).
-4. **Meta:** values for `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID`, `META_APP_SECRET`. Confirm the `login_otp` template is approved.
-5. **DNS:** confirm you can edit `maximoney.in` DNS (or just add the A record yourself once we have the IP).
-6. **Admin phone:** the `+91…` number that should get the first admin login.
+### 1. Provision the database
 
-I'll fill in `.env.prod`, run the bootstrap + first deploy, and hand you the working URL.
+SSH to the server and use the shared helper:
+
+```bash
+ssh root@217.216.58.194
+create-app-db whatsapp-crm
+```
+
+Copy the printed `DATABASE_URL` — looks like
+`postgres://whatsapp_crm:<password>@tod9m3eq8aady2f9ar6z8ciy:5432/whatsapp_crm`.
+
+### 2. Create the Coolify project
+
+Coolify UI → Projects → **+ Add** → name: `whatsapp-crm`. Pick the existing `production` environment.
+
+### 3. Add the application
+
+Inside the project → **+ New Resource** → **Application** → **Public Repository** (or **Private** if you've connected the GitHub app):
+
+| Field | Value |
+|---|---|
+| Repository | `https://github.com/maximoney/whatsapp-crm` |
+| Branch | `main` |
+| Build Pack | **Docker Compose** |
+| Compose File | `docker-compose.coolify.yml` |
+| Ports Exposes | `8080` |
+| Service to expose | `frontend` |
+| Instant deploy | **off** for now (we need env vars first) |
+
+### 4. Set environment variables
+
+Application → **Environment Variables** → paste each line from [`deploy/.env.prod.example`](deploy/.env.prod.example) as a separate row.
+
+Generate secrets first:
+```bash
+openssl rand -hex 16    # WEBHOOK_VERIFY_TOKEN
+openssl rand -hex 32    # JWT_SECRET
+```
+
+The most critical ones to get right at first deploy:
+- `DATABASE_URL` (from step 1)
+- `JWT_SECRET`
+- `CORS_ORIGIN=https://crm.maximoney.in`
+- `BOOTSTRAP_ADMIN_PHONE` (the master admin's WhatsApp number)
+
+WhatsApp credentials can be left blank initially — login won't work until they're in, but everything else will.
+
+### 5. Persistent volume for documents
+
+Application → **Storages** → **+ Add Persistent Storage**:
+
+| Field | Value |
+|---|---|
+| Name | `docs` |
+| Source path | (auto-managed by Coolify; leave blank) |
+| Destination path in container | `/var/crm/docs` |
+| Service | `backend` |
+
+Coolify maps this to a host path under `/data/coolify/applications/<uuid>/storage/docs/`.
+
+### 6. Domain
+
+1. At your DNS provider, add an A record:
+   ```
+   crm.maximoney.in.   A   217.216.58.194   TTL 300
+   ```
+2. Wait until `dig +short crm.maximoney.in` returns `217.216.58.194`.
+3. Application → **General** → **Domains** → enter `https://crm.maximoney.in` → Save.
+4. Coolify-Traefik fetches a Let's Encrypt cert within ~30 seconds.
+
+### 7. First deploy
+
+Application → **Deploy** button (top right). Watch the build logs.
+
+Expect:
+- pnpm install + tsc build (~2 min first time, cached after)
+- Compose up
+- `node dist/db/migrate.js` runs and applies the three migrations
+- Backend starts listening on `:4000`
+- Caddy starts listening on `:8080`
+- Traefik picks up the domain
+
+Visit `https://crm.maximoney.in/health` — should return `{"ok":true,...}`.
+
+### 8. Seed the first admin (one-time)
+
+```bash
+ssh root@217.216.58.194
+docker exec -it $(docker ps --format '{{.Names}}' | grep whatsapp-crm | grep backend) \
+  node dist/db/seed.js
+```
+
+Open `https://crm.maximoney.in/login`, enter the bootstrap admin phone, OTP arrives on WhatsApp (once the `login_otp` template is approved + the env values are set).
+
+---
+
+## Day-to-day
+
+| Action | How |
+|---|---|
+| Ship code | `git push origin main` (Coolify auto-deploys if the toggle is on, else click Deploy in the UI) |
+| Tail logs | Coolify UI → Logs, or `docker logs -f <container>` from SSH |
+| Open Postgres | `docker exec -it tod9m3eq8aady2f9ar6z8ciy psql -U whatsapp_crm -d whatsapp_crm` |
+| Manual migration | Click Redeploy (migrations re-run automatically), or `docker exec … node dist/db/migrate.js` |
+| Add a brand WA number | Admin UI → WhatsApp numbers |
+| Rotate `JWT_SECRET` | Coolify env var → Redeploy (logs everyone out) |
+| Restore DB from nightly backup | See `shared-infra.md` § Restore |
+
+---
+
+## What still needs an offsite backup
+
+The shared Postgres has nightly local dumps (14-day retention) — done. **Documents** in `/var/crm/docs` are NOT yet backed up offsite. When you order the Hetzner Storage Box, add a cron entry on the host that rclones the application storage dir nightly. I'll wire it the moment the Storage Box exists.
+
+---
+
+## What to send me to deploy
+
+Once you've created the Coolify project and added me to the server, send:
+
+1. **Coolify API token** (Coolify UI → avatar → Keys & Tokens → API Tokens) — so I can drive deploys via API
+2. **Confirmation the GitHub repo is created** at `maximoney/whatsapp-crm` and pushed
+3. **Meta WhatsApp credentials** (token, phone number ID, WABA ID, app secret) — drop into Coolify env
+4. **Master admin phone** in `+91…` form
+5. **Confirmation of DNS record** for `crm.maximoney.in`
+
+I'll create the Coolify project, set env vars, run the first deploy, seed the admin, and hand you the working URL.

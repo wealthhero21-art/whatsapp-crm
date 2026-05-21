@@ -1,0 +1,62 @@
+# Coolify deploy target.
+#
+# Coolify is configured to build this file from the GitHub repo. It:
+#   - builds backend + frontend images using the repo's Dockerfiles
+#   - injects env vars from the Coolify UI (NOT from any .env file in the repo)
+#   - attaches a persistent volume for /var/crm/docs
+#   - proxies the public domain (crm.maximoney.in) to the `frontend` service
+#     via Traefik
+#
+# Shared Postgres lives outside this compose (see shared-infra.md) and is
+# reachable on the `coolify` Docker network using its container name as host.
+#
+# Redis is per-app and runs inside this compose (one less moving piece to
+# share-vs-isolate).
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      # DATABASE_URL, JWT_SECRET, WHATSAPP_* etc. all come from Coolify env.
+      REDIS_URL: redis://redis:6379
+      DISK_STORAGE_PATH: /var/crm/docs
+      STORAGE_DRIVER: disk
+      HOST: 0.0.0.0
+      PORT: '4000'
+    volumes:
+      - docs:/var/crm/docs
+    depends_on:
+      - redis
+    # Migrate on every boot. schema_migrations dedupes already-applied files.
+    command: ["/bin/sh", "-c", "node dist/db/migrate.js && node dist/server.js"]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    restart: unless-stopped
+    # Traefik (Coolify) hits this port. Coolify's "Ports Exposes" should be 8080.
+    expose:
+      - "8080"
+    depends_on:
+      - backend
+
+volumes:
+  # Coolify maps this to a persistent host path under /data/coolify/applications/<uuid>/...
+  docs:
+  redis_data:

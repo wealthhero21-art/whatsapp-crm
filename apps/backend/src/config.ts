@@ -34,15 +34,7 @@ const schema = z.object({
   // Outbound webhook dispatch
   WEBHOOK_DELIVERY_RETRIES: z.coerce.number().default(5),
 
-  STORAGE_DRIVER: z.enum(['disk', 's3']).default('disk'),
   DISK_STORAGE_PATH: z.string().default('./storage'),
-  S3_ENDPOINT: z.string().optional(),
-  S3_REGION: z.string().default('ap-south-1'),
-  S3_BUCKET: z.string().optional(),
-  S3_ACCESS_KEY_ID: z.string().optional(),
-  S3_SECRET_ACCESS_KEY: z.string().optional(),
-  S3_KMS_KEY_ID: z.string().optional(),       // SSE-KMS key id/arn — required when STORAGE_DRIVER=s3
-  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(false),
 
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
 });

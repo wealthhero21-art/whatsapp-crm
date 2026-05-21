@@ -16,10 +16,11 @@ COPY apps/frontend ./apps/frontend
 
 RUN pnpm --filter @crm/frontend run build
 
-# --- Runtime stage (Caddy: TLS + static + reverse proxy in one) -----------
+# --- Runtime stage (internal Caddy: static + reverse proxy, no TLS) -------
+# Coolify-Traefik handles TLS termination for the public domain.
 FROM caddy:2-alpine
 
 COPY --from=builder /repo/apps/frontend/dist /srv
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 
-EXPOSE 80 443
+EXPOSE 8080

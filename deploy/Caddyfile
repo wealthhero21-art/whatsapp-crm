@@ -1,22 +1,21 @@
-# crm.maximoney.in  (Caddy auto-fetches Let's Encrypt certs on first request)
+# Internal Caddy — runs behind Coolify-Traefik (which terminates TLS).
+# Listens on :8080 inside the docker network; Traefik routes the public
+# domain to this container.
 #
-# Caddy serves the SPA, proxies all API/auth/webhook traffic to the backend
-# container on the internal docker network, and forces HTTPS.
-#
-# DOMAIN is supplied at runtime via env in docker-compose.prod.yml.
+# Responsibilities:
+#   - Serve the SPA static files (built into the image at /srv)
+#   - Proxy /api/*, /auth/*, /webhook/*, /health to the backend container
+#   - Disable buffering on the SSE stream
+#   - Set security headers (HSTS handled by Traefik; the rest here)
 
 {
-	# Global options
-	email {$ACME_EMAIL}
-	# Use the production ACME endpoint by default. To test cert issuance
-	# without burning Let's Encrypt rate limits, set ACME_CA=staging.
-	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+	auto_https off
+	admin off
 }
 
-{$DOMAIN} {
+:8080 {
 	encode zstd gzip
 
-	# Backend API + auth + Meta webhook
 	@api path /api/* /auth/* /webhook/* /health
 	reverse_proxy @api backend:4000 {
 		header_up X-Real-IP {remote_host}
@@ -24,7 +23,7 @@
 		header_up X-Forwarded-Proto {scheme}
 	}
 
-	# SSE stream — disable buffering, raise timeouts
+	# SSE stream — disable buffering, allow long reads
 	@sse path /api/events
 	reverse_proxy @sse backend:4000 {
 		flush_interval -1
@@ -33,17 +32,14 @@
 		}
 	}
 
-	# Everything else is the SPA. fallback to /index.html for client-side routing.
+	# Frontend SPA fallback
 	root * /srv
 	try_files {path} /index.html
 	file_server
 
-	# Security headers
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
-		# CSP intentionally permissive for the SPA bundle; tighten once stable.
 		X-Frame-Options "DENY"
 	}
 }

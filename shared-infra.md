@@ -116,6 +116,71 @@ gunzip -c /data/backups/postgres/<TS>/<db>.dump.gz \
 
 ---
 
+## Migrating an app from Supabase to this shared Postgres
+
+Most apps in this fleet are currently on Supabase. The shared Postgres above is a **drop-in replacement only for apps that use Supabase as a database** — not for apps that depend on Supabase Auth, Storage, Realtime, Edge Functions, or PostgREST.
+
+**Step 1 — Audit the app first.** Grep the codebase before doing anything:
+
+```bash
+# Are they using the Supabase JS/Python/Dart client at all?
+grep -rE "supabase|@supabase|createClient" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.py" --include="*.dart" .
+
+# Which specific Supabase features?
+grep -rE "\.auth\.|\.storage\.|\.from\(|\.rpc\(|\.channel\(|realtime|edge.?function" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" .
+
+# Is there a direct Postgres connection?
+grep -rE "DATABASE_URL|POSTGRES_URL|prisma|drizzle|knex|pg\.Client|psycopg" --include="*.ts" --include="*.js" --include="*.py" .
+
+# Schema files in repo?
+find . -type d -name "supabase" -not -path "*/node_modules/*"
+find . -type f -name "*.sql" -not -path "*/node_modules/*"
+```
+
+**Step 2 — Decide the migration path** based on what's actually used:
+
+| What the app uses from Supabase | Migration path |
+|---|---|
+| **DB only** — direct connection string, no `supabase-js`, no auth/storage | Drop-in. Use the shared Postgres. See step 3. |
+| **DB + Auth** | Two options: (a) keep Supabase Auth pointed at the shared Postgres (Supabase will manage `auth.*` schema there) — free tier covers this for small apps; or (b) migrate to Auth.js / Clerk / Lucia. Pick (a) unless cost or vendor lock-in is a real issue. |
+| **DB + Storage** | Self-host MinIO (Coolify has a one-click template), or keep Supabase Storage on free tier and only move the DB. |
+| **DB + Realtime** | Either keep Supabase Realtime (it can subscribe to any Postgres with logical replication enabled) or replace with `pg_notify` / Pusher / Ably. |
+| **Heavy Supabase user** (many features) | Consider Coolify's one-click "Supabase" service template — it self-hosts the full Supabase stack (~15 containers) on this server. Heavier resource-wise but gives a true drop-in. Don't do this for an app that uses 1–2 features. |
+
+**Step 3 — Drop-in migration (DB-only case)**:
+
+```bash
+# A. On your laptop, dump from Supabase
+PGPASSWORD='<supabase-db-password>' pg_dump \
+  -h db.<project-ref>.supabase.co -p 5432 -U postgres -d postgres \
+  --schema=public \
+  --no-owner --no-privileges --clean --if-exists \
+  -Fc -f supabase-dump.dump
+
+# B. Provision the destination DB on the shared Postgres
+ssh root@217.216.58.194 "create-app-db <app-name>"
+# copy the printed DATABASE_URL
+
+# C. Restore (from your laptop, copy + restore — easiest path)
+scp supabase-dump.dump root@217.216.58.194:/tmp/
+ssh root@217.216.58.194 "docker cp /tmp/supabase-dump.dump tod9m3eq8aady2f9ar6z8ciy:/tmp/ && \
+  docker exec tod9m3eq8aady2f9ar6z8ciy pg_restore -U postgres -d <app-name> --clean --if-exists --no-owner /tmp/supabase-dump.dump"
+
+# D. Swap the env var in the app's Coolify settings
+#    OLD: postgres://postgres:xxx@db.<ref>.supabase.co:5432/postgres
+#    NEW: (the DATABASE_URL printed by create-app-db)
+
+# E. Redeploy the app, verify, then disable Supabase project to stop billing.
+```
+
+⚠️ **Things that bite during Supabase → vanilla Postgres migration**:
+- **Extensions**: Supabase enables many by default (`uuid-ossp`, `pgcrypto`, `pg_trgm`, `vector`, etc.). `pg_dump` includes `CREATE EXTENSION` statements; the restore will fail for extensions not available in `postgres:16-alpine`. Most common ones are in alpine. If you need `vector` (pgvector), switch the image to `pgvector/pgvector:pg16` in Coolify.
+- **`auth.*` schema**: dumped but useless without Supabase Auth running. Either drop it after restore or keep if migrating with Auth.
+- **Row Level Security policies**: dumped, but they reference `auth.uid()` which doesn't exist outside Supabase. Either remove policies or implement equivalent JWT handling in your new auth layer.
+- **Storage paths in your data**: if rows contain Supabase Storage URLs, those keep working until you turn off the Supabase project — plan storage migration before swapping the DB.
+
+---
+
 ## Deploying a new app (the standard playbook)
 
 For each consumer app, follow these steps in order. Tweak only if you have a specific reason.
