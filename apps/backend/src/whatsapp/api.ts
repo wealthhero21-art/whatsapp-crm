@@ -1,12 +1,52 @@
 // Thin wrapper around the Meta Graph API for WhatsApp Cloud.
-// All calls use undici fetch; no SDK dependency.
+//
+// Multi-brand support: every send takes an optional `WaContext` describing
+// which phone_number_id + access_token to use. If omitted, we fall back to
+// the env-based defaults. This lets the rest of the app simply pass
+// `getNumberContext(whatsappNumberId)` to route a message via the correct
+// brand.
+
 import { fetch } from 'undici';
 import { config, graphBase } from '../config.js';
+import { query } from '../db/client.js';
 
-const authHeaders = () => ({
-  Authorization: `Bearer ${config.WHATSAPP_TOKEN}`,
-  'Content-Type': 'application/json',
-});
+export interface WaContext {
+  phoneNumberId: string;
+  token: string;
+}
+
+const envContext: WaContext = {
+  phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
+  token: config.WHATSAPP_TOKEN,
+};
+
+const ctxCache = new Map<string, WaContext>();
+
+/**
+ * Resolve a WaContext for a given whatsapp_numbers.id. Memoised in-process
+ * to avoid hitting the DB on every send. Returns null if the id doesn't
+ * exist or the row is inactive.
+ */
+export async function getNumberContext(numberId: string | null | undefined): Promise<WaContext | null> {
+  if (!numberId) return null;
+  const cached = ctxCache.get(numberId);
+  if (cached) return cached;
+  const { rows } = await query<{ phone_number_id: string; access_token: string; active: boolean }>(
+    `SELECT phone_number_id, access_token, active FROM whatsapp_numbers WHERE id = $1`,
+    [numberId]
+  );
+  const row = rows[0];
+  if (!row || !row.active) return null;
+  const ctx = { phoneNumberId: row.phone_number_id, token: row.access_token };
+  ctxCache.set(numberId, ctx);
+  return ctx;
+}
+
+/** Drop the cache (call after admin updates a number row). */
+export function invalidateNumberContext(numberId?: string) {
+  if (numberId) ctxCache.delete(numberId);
+  else ctxCache.clear();
+}
 
 interface SendResponse {
   messaging_product: 'whatsapp';
@@ -14,11 +54,15 @@ interface SendResponse {
   messages: { id: string }[];
 }
 
-async function postMessages(payload: Record<string, unknown>): Promise<SendResponse> {
-  const url = `${graphBase}/${config.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+async function postMessages(payload: Record<string, unknown>, ctx?: WaContext | null): Promise<SendResponse> {
+  const c = ctx ?? envContext;
+  const url = `${graphBase}/${c.phoneNumberId}/messages`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: authHeaders(),
+    headers: {
+      Authorization: `Bearer ${c.token}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({ messaging_product: 'whatsapp', ...payload }),
   });
   const body = (await res.json()) as SendResponse & { error?: unknown };
@@ -28,19 +72,27 @@ async function postMessages(payload: Record<string, unknown>): Promise<SendRespo
   return body;
 }
 
-export function sendText(to: string, body: string, previewUrl = false) {
-  return postMessages({
-    to,
-    type: 'text',
-    text: { body, preview_url: previewUrl },
-  });
+export function sendText(
+  to: string,
+  body: string,
+  opts: { previewUrl?: boolean; ctx?: WaContext | null } = {}
+) {
+  return postMessages(
+    {
+      to,
+      type: 'text',
+      text: { body, preview_url: opts.previewUrl ?? false },
+    },
+    opts.ctx
+  );
 }
 
 export function sendTemplate(
   to: string,
   name: string,
   language: string,
-  bodyParameters: string[] = []
+  bodyParameters: string[] = [],
+  opts: { ctx?: WaContext | null } = {}
 ) {
   const components =
     bodyParameters.length > 0
@@ -51,18 +103,18 @@ export function sendTemplate(
           },
         ]
       : [];
-  return postMessages({
-    to,
-    type: 'template',
-    template: { name, language: { code: language }, components },
-  });
+  return postMessages(
+    {
+      to,
+      type: 'template',
+      template: { name, language: { code: language }, components },
+    },
+    opts.ctx
+  );
 }
 
-export function markAsRead(waMessageId: string) {
-  return postMessages({
-    status: 'read',
-    message_id: waMessageId,
-  });
+export function markAsRead(waMessageId: string, ctx?: WaContext | null) {
+  return postMessages({ status: 'read', message_id: waMessageId }, ctx);
 }
 
 // --- Media ---
@@ -75,17 +127,16 @@ interface MediaUrlResponse {
   messaging_product: 'whatsapp';
 }
 
-export async function getMediaUrl(mediaId: string): Promise<MediaUrlResponse> {
-  const res = await fetch(`${graphBase}/${mediaId}`, { headers: authHeaders() });
+export async function getMediaUrl(mediaId: string, ctx?: WaContext | null): Promise<MediaUrlResponse> {
+  const token = (ctx ?? envContext).token;
+  const res = await fetch(`${graphBase}/${mediaId}`, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`getMediaUrl failed: ${res.status}`);
   return (await res.json()) as MediaUrlResponse;
 }
 
-export async function downloadMedia(mediaUrl: string): Promise<Buffer> {
-  // The URL Meta returns requires the same bearer token.
-  const res = await fetch(mediaUrl, {
-    headers: { Authorization: `Bearer ${config.WHATSAPP_TOKEN}` },
-  });
+export async function downloadMedia(mediaUrl: string, ctx?: WaContext | null): Promise<Buffer> {
+  const token = (ctx ?? envContext).token;
+  const res = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`downloadMedia failed: ${res.status}`);
   const arr = await res.arrayBuffer();
   return Buffer.from(arr);
@@ -107,8 +158,9 @@ export async function listTemplates(): Promise<TemplateListResponse['data']> {
   const all: TemplateListResponse['data'] = [];
   let url: string | undefined =
     `${graphBase}/${config.WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates?limit=200`;
+  const headers = { Authorization: `Bearer ${config.WHATSAPP_TOKEN}` };
   while (url) {
-    const res = await fetch(url, { headers: authHeaders() });
+    const res = await fetch(url, { headers });
     if (!res.ok) throw new Error(`listTemplates failed: ${res.status}`);
     const body = (await res.json()) as TemplateListResponse;
     all.push(...body.data);

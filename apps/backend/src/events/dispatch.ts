@@ -9,12 +9,31 @@ import { query } from '../db/client.js';
 import { webhookQueue } from '../lib/queue.js';
 import { listAdapters } from '../integrations/registry.js';
 import { config } from '../config.js';
+import { sendTemplateToLead } from '../whatsapp/outbound.js';
 import type { CrmEvent } from '@crm/shared';
 
 export function startEventDispatch() {
   on('*', async (event: CrmEvent) => {
     await fanOutToWebhooks(event);
     await fanOutToAdapters(event);
+  });
+
+  // doc.rejected → send re-request template to the customer.
+  on('doc.rejected', async (event) => {
+    const p = event.payload as { lead_id: string; slot_id: string; reason: string | null };
+    const { rows } = await query<{ label: string | null; doc_category: string }>(
+      `SELECT label, doc_category FROM lead_doc_slots WHERE id = $1`,
+      [p.slot_id]
+    );
+    const slot = rows[0];
+    if (!slot) return;
+    const docName = slot.label ?? slot.doc_category.replace(/_/g, ' ');
+    await sendTemplateToLead({
+      leadId: p.lead_id,
+      templateName: config.DOC_REREQUEST_TEMPLATE,
+      language: config.DOC_REREQUEST_LANGUAGE,
+      bodyParams: [docName, p.reason ?? 'Please re-upload a clear copy.'],
+    });
   });
 }
 

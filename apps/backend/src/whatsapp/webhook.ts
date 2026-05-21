@@ -64,12 +64,27 @@ interface WaStatus {
 
 export async function registerWebhook(app: FastifyInstance) {
   // ---- GET: Meta verify handshake ----
+  // Meta sends the verify token from whichever app's webhook page is being
+  // saved. We accept the env-default OR any active whatsapp_numbers row's
+  // verify token so that adding a brand later doesn't need a redeploy.
   app.get('/webhook/whatsapp', async (req, reply) => {
     const q = req.query as Record<string, string>;
     const mode = q['hub.mode'];
     const token = q['hub.verify_token'];
     const challenge = q['hub.challenge'];
-    if (mode === 'subscribe' && token === config.WEBHOOK_VERIFY_TOKEN) {
+    if (mode !== 'subscribe' || !token) {
+      reply.code(403).send({ error: 'bad request' });
+      return;
+    }
+    if (token === config.WEBHOOK_VERIFY_TOKEN) {
+      reply.code(200).type('text/plain').send(challenge);
+      return;
+    }
+    const { rowCount } = await query(
+      `SELECT 1 FROM whatsapp_numbers WHERE webhook_verify_token = $1 AND active = TRUE LIMIT 1`,
+      [token]
+    );
+    if ((rowCount ?? 0) > 0) {
       reply.code(200).type('text/plain').send(challenge);
       return;
     }
@@ -96,50 +111,71 @@ export async function registerWebhook(app: FastifyInstance) {
 
   app.post('/webhook/whatsapp', async (req, reply) => {
     const rawBody: Buffer = (req as any).rawBody ?? Buffer.alloc(0);
-    const sigOk = verifySignature(rawBody, req.headers['x-hub-signature-256'] as string | undefined);
-
     const payload = req.body as { entry?: WaWebhookEntry[] };
 
-    // 1. Persist raw event
+    // Pluck the phone_number_id out of the first change (Meta always sends
+    // one entry per webhook delivery, but be defensive).
+    const phoneNumberId =
+      payload.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ?? null;
+
+    // Find which brand row owns this phone_number_id so we can pick the
+    // right app secret for signature verification + the right whatsapp_number_id
+    // to stamp on the resulting messages.
+    let brand: { id: string; app_secret: string | null } | null = null;
+    if (phoneNumberId) {
+      const { rows } = await query<{ id: string; app_secret: string | null }>(
+        `SELECT id, app_secret FROM whatsapp_numbers
+          WHERE phone_number_id = $1 AND active = TRUE`,
+        [phoneNumberId]
+      );
+      brand = rows[0] ?? null;
+    }
+
+    const sigOk = verifySignature(
+      rawBody,
+      req.headers['x-hub-signature-256'] as string | undefined,
+      brand?.app_secret ?? config.META_APP_SECRET ?? null
+    );
+
     const eventRow = await query<{ id: number }>(
       `INSERT INTO webhook_events (signature_valid, payload) VALUES ($1, $2) RETURNING id`,
       [sigOk, payload]
     );
 
     if (!sigOk) {
-      req.log.warn({ eventId: eventRow.rows[0].id }, 'webhook signature mismatch');
+      req.log.warn({ eventId: eventRow.rows[0].id, phoneNumberId }, 'webhook signature mismatch');
       reply.code(401).send({ error: 'bad signature' });
       return;
     }
 
-    // 2. Acknowledge immediately
+    // Acknowledge immediately — Meta requires <20s, we want to ack in <100ms.
     reply.code(200).send({ ok: true });
 
-    // 3. Process asynchronously (we already acked) — but in-process is fine for now
     setImmediate(() => {
-      processWebhook(payload, eventRow.rows[0].id).catch((err) => {
+      processWebhook(payload, eventRow.rows[0].id, brand?.id ?? null).catch((err) => {
         req.log.error({ err, eventId: eventRow.rows[0].id }, 'webhook processing failed');
       });
     });
   });
 }
 
-async function processWebhook(payload: { entry?: WaWebhookEntry[] }, eventId: number) {
+async function processWebhook(
+  payload: { entry?: WaWebhookEntry[] },
+  eventId: number,
+  brandWaNumberId: string | null
+) {
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
       if (change.field !== 'messages') continue;
       const value = change.value;
 
-      // Profile names come alongside messages
       const profileByWaId = new Map<string, string | undefined>();
       for (const c of value.contacts ?? []) profileByWaId.set(c.wa_id, c.profile?.name);
 
-      // Inbound messages
       for (const msg of value.messages ?? []) {
-        await handleInboundMessage(msg, profileByWaId.get(msg.from));
+        await handleInboundMessage(msg, profileByWaId.get(msg.from), brandWaNumberId);
       }
 
-      // Status updates (sent/delivered/read/failed for our outbound)
       for (const st of value.statuses ?? []) {
         await handleStatus(st);
       }
@@ -164,8 +200,24 @@ async function upsertContact(waId: string, profileName?: string) {
   return res.rows[0].id;
 }
 
-async function handleInboundMessage(msg: WaInboundMessage, profileName?: string) {
+async function handleInboundMessage(
+  msg: WaInboundMessage,
+  profileName: string | undefined,
+  brandWaNumberId: string | null
+) {
   const contactId = await upsertContact(msg.from, profileName);
+
+  // Upsert a (contact, brand) conversation so per-brand inbox stays distinct.
+  if (brandWaNumberId) {
+    await query(
+      `INSERT INTO conversations (contact_id, whatsapp_number_id, last_inbound_at, unread_count)
+       VALUES ($1, $2, NOW(), 1)
+       ON CONFLICT (contact_id, whatsapp_number_id) DO UPDATE
+         SET last_inbound_at = NOW(),
+             unread_count = conversations.unread_count + 1`,
+      [contactId, brandWaNumberId]
+    );
+  }
 
   // Pull media info if applicable
   let fileId: string | null = null;
@@ -208,18 +260,20 @@ async function handleInboundMessage(msg: WaInboundMessage, profileName?: string)
       [contactId, mediaId, mimeType, filename ?? null, `pending/${mediaId}`]
     );
     fileId = fileRow.rows[0].id;
-    // Queue async download — Meta URL expires in ~5 min, so don't delay
-    await mediaQueue.add('download', { fileId, mediaId, contactId });
+    // Pass the brand so the worker uses that brand's token to fetch the media URL.
+    await mediaQueue.add('download', { fileId, mediaId, contactId, brandWaNumberId });
   }
 
   const body = msg.text?.body ?? caption ?? null;
 
   const inserted = await query<{ id: string }>(
-    `INSERT INTO messages (contact_id, wa_message_id, direction, msg_type, body, file_id, status, raw)
-     VALUES ($1, $2, 'in', $3, $4, $5, 'received', $6)
+    `INSERT INTO messages
+       (contact_id, wa_message_id, direction, msg_type, body, file_id,
+        status, raw, whatsapp_number_id)
+     VALUES ($1, $2, 'in', $3, $4, $5, 'received', $6, $7)
      ON CONFLICT (wa_message_id) DO NOTHING
      RETURNING id`,
-    [contactId, msg.id, msg.type, body, fileId, msg]
+    [contactId, msg.id, msg.type, body, fileId, msg, brandWaNumberId]
   );
 
   if (inserted.rows.length > 0) {

@@ -16,6 +16,10 @@ const schema = z.object({
   META_APP_SECRET: z.string().optional(),
   META_GRAPH_VERSION: z.string().default('v21.0'),
 
+  // Default template names — sources may override these via lead_sources.welcome_template etc.
+  DOC_REREQUEST_TEMPLATE: z.string().default('doc_rerequest'),
+  DOC_REREQUEST_LANGUAGE: z.string().default('en'),
+
   // OTP login over WhatsApp
   OTP_TEMPLATE_NAME: z.string().default('login_otp'),
   OTP_TEMPLATE_LANGUAGE: z.string().default('en'),

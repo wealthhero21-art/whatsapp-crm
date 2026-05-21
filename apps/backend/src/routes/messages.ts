@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/client.js';
-import { sendText, sendTemplate } from '../whatsapp/api.js';
+import { sendText, sendTemplate, getNumberContext } from '../whatsapp/api.js';
 import { sseBroadcast } from '../lib/sse.js';
 import { canAccessContact } from '../lib/scope.js';
 
@@ -44,6 +44,9 @@ export async function registerMessageRoutes(app: FastifyInstance) {
   const sendSchema = z.object({
     contact_id: z.string().uuid().optional(),
     to: z.string().optional(),  // either contact_id or to (E.164) required
+    // Override the brand WA number to send from. If omitted, we pick the
+    // most-recent lead's brand for this contact, or fall back to env defaults.
+    whatsapp_number_id: z.string().uuid().optional(),
     type: z.enum(['text', 'template']),
     text: z.string().optional(),
     template: z
@@ -111,14 +114,28 @@ export async function registerMessageRoutes(app: FastifyInstance) {
       return;
     }
 
+    // Resolve which brand WA number to send from.
+    // Precedence: explicit override → contact's most recent lead's brand → env default.
+    let numberId = body.whatsapp_number_id ?? null;
+    if (!numberId) {
+      const { rows } = await query<{ whatsapp_number_id: string | null }>(
+        `SELECT whatsapp_number_id FROM leads
+          WHERE contact_id = $1 AND whatsapp_number_id IS NOT NULL
+          ORDER BY updated_at DESC LIMIT 1`,
+        [contact.id]
+      );
+      numberId = rows[0]?.whatsapp_number_id ?? null;
+    }
+    const ctx = await getNumberContext(numberId);
+
     // Send via Meta
     let waResponse;
     try {
       if (body.type === 'text') {
-        waResponse = await sendText(contact.wa_id, body.text!);
+        waResponse = await sendText(contact.wa_id, body.text!, { ctx });
       } else {
         const t = body.template!;
-        waResponse = await sendTemplate(contact.wa_id, t.name, t.language, t.body_params);
+        waResponse = await sendTemplate(contact.wa_id, t.name, t.language, t.body_params, { ctx });
       }
     } catch (err: unknown) {
       const e = err as { status?: number; body?: unknown };
@@ -130,8 +147,8 @@ export async function registerMessageRoutes(app: FastifyInstance) {
     const inserted = await query(
       `INSERT INTO messages
          (contact_id, wa_message_id, direction, msg_type, body,
-          template_name, template_params, status, raw)
-       VALUES ($1, $2, 'out', $3, $4, $5, $6, 'sent', $7)
+          template_name, template_params, status, raw, whatsapp_number_id)
+       VALUES ($1, $2, 'out', $3, $4, $5, $6, 'sent', $7, $8)
        RETURNING *`,
       [
         contact.id,
@@ -141,6 +158,7 @@ export async function registerMessageRoutes(app: FastifyInstance) {
         body.type === 'template' ? body.template!.name : null,
         body.type === 'template' ? body.template!.body_params : null,
         waResponse,
+        numberId,
       ]
     );
     await query(`UPDATE contacts SET last_outbound_at = NOW() WHERE id = $1`, [contact.id]);

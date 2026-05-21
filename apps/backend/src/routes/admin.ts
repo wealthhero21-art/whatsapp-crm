@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query } from '../db/client.js';
 import { audit } from '../lib/audit.js';
 import { generateApiKey } from '../auth/apiKey.js';
+import { invalidateNumberContext } from '../whatsapp/api.js';
 import type { Integration, LeadSource, User } from '@crm/shared';
 
 function normalisePhone(input: string): string {
@@ -379,6 +380,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
        RETURNING id, brand_label, display_phone, phone_number_id, waba_id, active, created_at`,
       args
     );
+    invalidateNumberContext(id);
     await audit({ actorUserId: req.user!.id, action: 'whatsapp_number.update', entityType: 'whatsapp_number', entityId: id });
     return { number: rows[0] };
   });

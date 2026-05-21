@@ -8,6 +8,7 @@ import { emit } from '../events/bus.js';
 import { getAdapter } from '../integrations/registry.js';
 import { leadScopeSql, canAccessLead } from '../lib/scope.js';
 import { instantiateLeadSlots } from '../lib/docs.js';
+import { sendTemplateToLead } from '../whatsapp/outbound.js';
 import type { Lead, LeadStatus } from '@crm/shared';
 
 const STATUS_VALUES: LeadStatus[] = [
@@ -147,8 +148,22 @@ export async function registerLeadRoutes(app: FastifyInstance) {
       });
 
       // First time we've seen this lead — instantiate the doc checklist
+      // and fire the source's welcome template (fire-and-forget).
       if (wasNew && sourceId) {
         await instantiateLeadSlots(leadId, sourceId, effectiveProduct);
+
+        const welcome = await query<{ welcome_template: string | null }>(
+          `SELECT welcome_template FROM lead_sources WHERE id = $1`,
+          [sourceId]
+        );
+        const template = welcome.rows[0]?.welcome_template;
+        if (template) {
+          void sendTemplateToLead({
+            leadId,
+            templateName: template,
+            bodyParams: [contactName ?? ''],
+          });
+        }
       }
 
       // Auto-assign per source strategy

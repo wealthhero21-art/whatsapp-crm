@@ -20,3 +20,4 @@ apps/backend/storage/
 
 # Distributable archives we don't need in git
 whatsapp-crm.zip
+.secrets/

@@ -4,7 +4,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { fetch } from 'undici';
 import mime from 'mime-types';
 import { config } from '../config.js';
-import { downloadMedia, getMediaUrl } from '../whatsapp/api.js';
+import { downloadMedia, getMediaUrl, getNumberContext } from '../whatsapp/api.js';
 import { storage } from '../storage/index.js';
 import { query } from '../db/client.js';
 import { sseBroadcast } from './sse.js';
@@ -18,6 +18,7 @@ interface MediaJob {
   fileId: string;
   mediaId: string;
   contactId: string;
+  brandWaNumberId?: string | null;
 }
 
 interface WebhookJob {
@@ -28,10 +29,11 @@ export function startWorkers() {
   new Worker<MediaJob>(
     'media',
     async (job) => {
-      const { fileId, mediaId, contactId } = job.data;
+      const { fileId, mediaId, contactId, brandWaNumberId } = job.data;
       try {
-        const meta = await getMediaUrl(mediaId);
-        const bytes = await downloadMedia(meta.url);
+        const ctx = await getNumberContext(brandWaNumberId ?? null);
+        const meta = await getMediaUrl(mediaId, ctx);
+        const bytes = await downloadMedia(meta.url, ctx);
         const sha256 = createHash('sha256').update(bytes).digest('hex');
         const ext = mime.extension(meta.mime_type) || 'bin';
         const key = `media/${contactId}/${fileId}.${ext}`;
