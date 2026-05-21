@@ -2,11 +2,10 @@
 # Listens on :8080 inside the docker network; Traefik routes the public
 # domain to this container.
 #
-# Responsibilities:
-#   - Serve the SPA static files (built into the image at /srv)
-#   - Proxy /api/*, /auth/*, /webhook/*, /health to the backend container
-#   - Disable buffering on the SSE stream
-#   - Set security headers (HSTS handled by Traefik; the rest here)
+# Uses `handle` blocks (mutually exclusive — first match wins, all others
+# skipped). An earlier version used `reverse_proxy @api ...` with a named
+# `path` matcher, but Caddy fell through to the SPA fallback for matched
+# paths in this image — handle/handle/handle is the robust pattern.
 
 {
 	auto_https off
@@ -16,26 +15,36 @@
 :8080 {
 	encode zstd gzip
 
-	@api path /api/* /auth/* /webhook/* /health
-	reverse_proxy @api backend:4000 {
-		header_up X-Real-IP {remote_host}
-		header_up X-Forwarded-For {remote_host}
-		header_up X-Forwarded-Proto {scheme}
-	}
-
 	# SSE stream — disable buffering, allow long reads
-	@sse path /api/events
-	reverse_proxy @sse backend:4000 {
-		flush_interval -1
-		transport http {
-			read_timeout 24h
+	handle /api/events {
+		reverse_proxy backend:4000 {
+			flush_interval -1
+			transport http {
+				read_timeout 24h
+			}
 		}
 	}
 
-	# Frontend SPA fallback
-	root * /srv
-	try_files {path} /index.html
-	file_server
+	# Backend API + auth + Meta webhook + health
+	handle /api/* {
+		reverse_proxy backend:4000
+	}
+	handle /auth/* {
+		reverse_proxy backend:4000
+	}
+	handle /webhook/* {
+		reverse_proxy backend:4000
+	}
+	handle /health {
+		reverse_proxy backend:4000
+	}
+
+	# Frontend SPA fallback for everything else.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
 
 	header {
 		X-Content-Type-Options "nosniff"
