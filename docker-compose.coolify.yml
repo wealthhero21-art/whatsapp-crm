@@ -69,11 +69,14 @@ services:
     networks:
       - default
       - coolify
-    # Coolify's auto-generated routing labels omit traefik.docker.network,
-    # so Traefik picks the first attached network — sometimes the per-app
-    # one, which Traefik isn't on → Bad Gateway. Pin it to coolify.
+    # Coolify's auto-generated routing labels (a) omit traefik.docker.network
+    # (Traefik then picks an attached network arbitrarily, sometimes one it
+    # isn't on → 502), and (b) don't pin a loadbalancer.server.port, so
+    # Traefik defaults to the lowest port the image EXPOSEs — caddy:2-alpine
+    # exposes 80/443/2019, none of which our Caddyfile listens on. Pin both.
     labels:
       - traefik.docker.network=coolify
+      - traefik.http.services.http-0-b245h6se6xsbefhgkgw1xj62-frontend.loadbalancer.server.port=8080
 
 volumes:
   docs:
