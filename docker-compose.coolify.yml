@@ -23,13 +23,17 @@ services:
       # DATABASE_URL, JWT_SECRET, WHATSAPP_* etc. all come from Coolify env.
       REDIS_URL: redis://redis:6379
       DISK_STORAGE_PATH: /var/crm/docs
-      STORAGE_DRIVER: disk
       HOST: 0.0.0.0
       PORT: '4000'
     volumes:
       - docs:/var/crm/docs
     depends_on:
       - redis
+    # Attach to both the per-app network (default) and the shared `coolify`
+    # network so the shared Postgres is reachable by its container hostname.
+    networks:
+      - default
+      - coolify
     # Migrate on every boot. schema_migrations dedupes already-applied files.
     command: ["/bin/sh", "-c", "node dist/db/migrate.js && node dist/server.js"]
 
@@ -60,3 +64,8 @@ volumes:
   # Coolify maps this to a persistent host path under /data/coolify/applications/<uuid>/...
   docs:
   redis_data:
+
+networks:
+  default:
+  coolify:
+    external: true
