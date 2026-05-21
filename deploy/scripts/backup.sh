@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Daily Postgres backup → S3 (SSE-KMS encrypted).
+# Nightly backup → Hetzner Storage Box (SFTP).
 #
-# Reads connection + AWS creds from $APP_DIR/.env.prod.
-# Object key: backups/postgres/yyyy-mm-dd_HHMMSS.sql.gz
-# Lifecycle: configure the bucket to expire objects under backups/ after 30d.
+# Two artefacts each run:
+#   1. Postgres dump      → backups/postgres/yyyy-mm-dd_HHMMSS.sql.gz
+#   2. Documents snapshot → backups/docs/yyyy-mm-dd_HHMMSS.tar.gz
+#
+# Both pushed via rclone (which speaks SFTP natively). Storage Box keeps a
+# 30-day retention; we additionally delete remote files older than 30 days
+# at the end of the run so old leakage doesn't accumulate.
 
 set -euo pipefail
 
@@ -13,36 +17,55 @@ ENV_FILE="$APP_DIR/.env.prod"
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing $ENV_FILE" >&2; exit 1
 fi
-
 # shellcheck disable=SC1090
 set -a; source "$ENV_FILE"; set +a
 
-: "${S3_BUCKET:?S3_BUCKET not set}"
-: "${S3_KMS_KEY_ID:?S3_KMS_KEY_ID not set}"
-: "${S3_REGION:?S3_REGION not set}"
-: "${POSTGRES_USER:?}"; : "${POSTGRES_DB:?}"
+: "${HETZNER_SB_HOST:?HETZNER_SB_HOST not set}"
+: "${HETZNER_SB_USER:?HETZNER_SB_USER not set}"
+: "${HETZNER_SB_PASSWORD:?HETZNER_SB_PASSWORD not set}"
+: "${POSTGRES_USER:?}"; : "${POSTGRES_DB:?}"; : "${POSTGRES_PASSWORD:?}"
+: "${DISK_STORAGE_PATH:?DISK_STORAGE_PATH not set}"
 
 TS="$(date -u +%Y-%m-%d_%H%M%S)"
-TMP="$(mktemp -t crm-backup.XXXXXX.sql.gz)"
-trap 'rm -f "$TMP"' EXIT
 
-echo "[$TS] dumping postgres from container"
+# ---- 1. Build a one-off rclone config for this run ----
+# Using --sftp-host etc inline flags keeps the password out of any config file.
+RCLONE_REMOTE="sb"
+export RCLONE_CONFIG_SB_TYPE=sftp
+export RCLONE_CONFIG_SB_HOST="$HETZNER_SB_HOST"
+export RCLONE_CONFIG_SB_USER="$HETZNER_SB_USER"
+export RCLONE_CONFIG_SB_PORT="${HETZNER_SB_PORT:-23}"
+# rclone wants the password obscured. obscure once at runtime.
+export RCLONE_CONFIG_SB_PASS="$(rclone obscure "$HETZNER_SB_PASSWORD")"
+
+# ---- 2. Postgres dump ----
+DUMP="$(mktemp -t crm-pg.XXXXXX.sql.gz)"
+trap 'rm -f "$DUMP"' EXIT
+
+echo "[$TS] dumping postgres"
 docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" \
   "$(docker compose -f "$APP_DIR/docker-compose.prod.yml" ps -q postgres)" \
   pg_dump -U "$POSTGRES_USER" --no-owner --no-privileges "$POSTGRES_DB" \
-  | gzip -9 > "$TMP"
+  | gzip -9 > "$DUMP"
 
-SIZE=$(stat -c%s "$TMP")
-echo "[$TS] dump size: $SIZE bytes"
+PG_SIZE=$(stat -c%s "$DUMP")
+echo "[$TS] postgres dump: $PG_SIZE bytes"
+rclone copyto --no-traverse "$DUMP" "$RCLONE_REMOTE:backups/postgres/${TS}.sql.gz"
 
-KEY="backups/postgres/${TS}.sql.gz"
-echo "[$TS] uploading s3://$S3_BUCKET/$KEY (SSE-KMS)"
+# ---- 3. Documents snapshot ----
+# Tar the entire docs directory. For very large doc sets (>10 GB) switch this
+# to an incremental approach (rclone sync of the live tree to backups/docs-live/).
+if [[ -d "$DISK_STORAGE_PATH" ]]; then
+  echo "[$TS] streaming docs tar to storage box"
+  tar -C "$DISK_STORAGE_PATH" -czf - . \
+    | rclone rcat "$RCLONE_REMOTE:backups/docs/${TS}.tar.gz"
+else
+  echo "[$TS] skipping docs (storage path $DISK_STORAGE_PATH does not exist yet)"
+fi
 
-AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" \
-AWS_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
-AWS_REGION="$S3_REGION" \
-aws s3 cp "$TMP" "s3://$S3_BUCKET/$KEY" \
-  --sse aws:kms \
-  --sse-kms-key-id "$S3_KMS_KEY_ID"
+# ---- 4. Prune anything older than 30 days ----
+echo "[$TS] pruning old backups (>30d)"
+rclone delete --min-age 30d "$RCLONE_REMOTE:backups/postgres"
+rclone delete --min-age 30d "$RCLONE_REMOTE:backups/docs"
 
-echo "[$TS] ✓ backup uploaded"
+echo "[$TS] ✓ backup complete"

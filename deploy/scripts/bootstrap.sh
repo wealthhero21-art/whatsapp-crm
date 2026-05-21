@@ -112,9 +112,16 @@ sed -i \
   "$SSHD"
 systemctl reload ssh || systemctl reload sshd
 
-echo "▸ creating app directory $APP_DIR"
+echo "▸ creating app + docs directories"
 mkdir -p "$APP_DIR"
 chown "$DEPLOY_USER:$DEPLOY_USER" "$APP_DIR"
+
+# Docs volume mounted into the backend container. Owned by uid/gid 999 because
+# that's the node user inside our backend image (uncommon, but the safe move).
+# We chmod 770 because docs are sensitive — only the container + root can read.
+mkdir -p /var/crm/docs
+chown -R 999:999 /var/crm/docs
+chmod 770 /var/crm/docs
 
 echo
 echo "✓ bootstrap complete"

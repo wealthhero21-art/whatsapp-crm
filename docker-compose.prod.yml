@@ -44,6 +44,12 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
+      # Inside the container the storage path is fixed; we bind-mount the host
+      # path onto it so the backup script (running on the host) can see the
+      # same files.
+      DISK_STORAGE_PATH: /var/crm/docs
+    volumes:
+      - /var/crm/docs:/var/crm/docs
     depends_on:
       postgres:
         condition: service_healthy

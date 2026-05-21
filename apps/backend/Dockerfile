@@ -29,8 +29,8 @@ FROM node:20-slim
 # Tini for proper signal handling
 RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates && rm -rf /var/lib/apt/lists/*
 
-# Non-root user
-RUN groupadd -r app && useradd -r -g app -d /app -s /usr/sbin/nologin app
+# Non-root user with a fixed UID so host bind-mounts can be chowned predictably.
+RUN groupadd -r -g 999 app && useradd -r -u 999 -g app -d /app -s /usr/sbin/nologin app
 
 WORKDIR /app
 COPY --from=builder /out/node_modules ./node_modules
