@@ -6,7 +6,8 @@
 // `getNumberContext(whatsappNumberId)` to route a message via the correct
 // brand.
 
-import { fetch } from 'undici';
+import { fetch, FormData } from 'undici';
+// Blob comes from Node's WHATWG globals (Node 18+); undici's FormData accepts it.
 import { config, graphBase } from '../config.js';
 import { query } from '../db/client.js';
 
@@ -111,6 +112,49 @@ export function sendTemplate(
     },
     opts.ctx
   );
+}
+
+// Upload bytes to Meta's media endpoint and return the media_id.
+// Required as the first step before sending audio/image/video/document by id.
+export async function uploadMedia(
+  bytes: Buffer,
+  mimeType: string,
+  filename: string,
+  ctx?: WaContext | null
+): Promise<{ id: string }> {
+  const c = ctx ?? envContext;
+  const url = `${graphBase}/${c.phoneNumberId}/media`;
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', mimeType);
+  form.append('file', new Blob([new Uint8Array(bytes)], { type: mimeType }), filename);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${c.token}` },
+    body: form,
+  });
+  const body = (await res.json()) as { id?: string; error?: unknown };
+  if (!res.ok || !body.id) {
+    throw Object.assign(new Error('Meta media upload failed'), { status: res.status, body });
+  }
+  return { id: body.id };
+}
+
+/**
+ * Send a previously-uploaded media item as an audio/document/image/video message.
+ */
+export function sendMediaById(
+  to: string,
+  mediaId: string,
+  type: 'audio' | 'document' | 'image' | 'video',
+  opts: { caption?: string; filename?: string; ctx?: WaContext | null } = {}
+) {
+  const payload: Record<string, unknown> = { id: mediaId };
+  if (opts.caption && (type === 'image' || type === 'video' || type === 'document')) {
+    payload.caption = opts.caption;
+  }
+  if (opts.filename && type === 'document') payload.filename = opts.filename;
+  return postMessages({ to, type, [type]: payload }, opts.ctx);
 }
 
 export function markAsRead(waMessageId: string, ctx?: WaContext | null) {

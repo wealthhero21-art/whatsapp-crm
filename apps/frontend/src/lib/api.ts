@@ -1,6 +1,7 @@
 import type {
   Lead, LeadSource, Integration, OutboundWebhook, User, UserRole,
   WhatsappNumber, DocRequirement, LeadDocSlot,
+  QuickReply, ConversationNote,
 } from '@crm/shared';
 
 // ---------------------------------------------------------------------------
@@ -289,6 +290,35 @@ export const api = {
     http(`/api/doc-slots/${slotId}/reject`, {
       method: 'POST', body: JSON.stringify({ reason }),
     }),
+  // ----- Quick-replies -----
+  listSnippets: () =>
+    http<{ snippets: QuickReply[] }>(`/api/snippets`).then((r) => r.snippets),
+  createSnippet: (body: { slug: string; label: string; body: string; language?: string; scope?: 'personal' | 'team' }) =>
+    http<{ snippet: QuickReply }>(`/api/snippets`, {
+      method: 'POST', body: JSON.stringify(body),
+    }).then((r) => r.snippet),
+  updateSnippet: (id: string, body: Partial<QuickReply>) =>
+    http<{ snippet: QuickReply }>(`/api/snippets/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }).then((r) => r.snippet),
+  deleteSnippet: (id: string) =>
+    http(`/api/snippets/${id}`, { method: 'DELETE' }),
+
+  // ----- Internal notes (per contact) -----
+  listNotes: (contactId: string) =>
+    http<{ notes: ConversationNote[] }>(`/api/contacts/${contactId}/notes`)
+      .then((r) => r.notes),
+  addNote: (contactId: string, body: string, pinned = false) =>
+    http<{ note: ConversationNote }>(`/api/contacts/${contactId}/notes`, {
+      method: 'POST', body: JSON.stringify({ body, pinned }),
+    }).then((r) => r.note),
+  updateNote: (id: string, body: Partial<ConversationNote>) =>
+    http<{ note: ConversationNote }>(`/api/notes/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }).then((r) => r.note),
+  deleteNote: (id: string) =>
+    http(`/api/notes/${id}`, { method: 'DELETE' }),
+
   uploadFile: async (contactId: string, file: File): Promise<{ id: string }> => {
     const token = getToken();
     const fd = new FormData();

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type FileRow } from '../lib/api';
 import { formatBytes, formatTime, mimeIcon, DOC_CATEGORIES } from '../lib/format';
+import { NotesPanel } from './NotesPanel';
 
 interface Props {
   contactId: string;
@@ -100,6 +101,7 @@ export function FilesPanel({ contactId }: Props) {
           </div>
         )}
       </div>
+      <NotesPanel contactId={contactId} />
     </aside>
   );
 }

@@ -10,6 +10,8 @@ import {
   mimeIcon,
 } from '../lib/format';
 import { TemplatePicker } from './TemplatePicker';
+import { SnippetPicker } from './SnippetPicker';
+import { VoiceRecorder } from './VoiceRecorder';
 
 interface Props {
   contactId: string;
@@ -103,17 +105,30 @@ export function ChatPane({ contactId }: Props) {
           </div>
         )}
         <div className="composer-row">
+          {draft.startsWith('/') && (
+            <SnippetPicker
+              query={draft.slice(1)}
+              onPick={(body) => setDraft(body)}
+              onDismiss={() => setDraft('')}
+            />
+          )}
           <textarea
-            placeholder={sessionOpen ? 'Type a reply…' : 'Click "Template" to send →'}
+            placeholder={sessionOpen ? 'Type a reply… or "/" for snippets' : 'Click "Template" to send →'}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             disabled={!sessionOpen}
             onKeyDown={(e) => {
+              // SnippetPicker handles Enter when the draft starts with "/".
+              if (draft.startsWith('/')) return;
               if (e.key === 'Enter' && !e.shiftKey && draft.trim()) {
                 e.preventDefault();
                 sendMut.mutate(draft.trim());
               }
             }}
+          />
+          <VoiceRecorder
+            contactId={contactId}
+            onSent={() => qc.invalidateQueries({ queryKey: ['messages', contactId] })}
           />
           <button className="btn" onClick={() => setShowTemplates(true)}>
             Template

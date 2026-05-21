@@ -1,7 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/client.js';
-import { sendText, sendTemplate, getNumberContext } from '../whatsapp/api.js';
+import { createHash } from 'node:crypto';
+import mime from 'mime-types';
+import { sendText, sendTemplate, getNumberContext, uploadMedia, sendMediaById } from '../whatsapp/api.js';
+import { storage } from '../storage/index.js';
 import { sseBroadcast } from '../lib/sse.js';
 import { canAccessContact } from '../lib/scope.js';
 
@@ -166,5 +169,98 @@ export async function registerMessageRoutes(app: FastifyInstance) {
     sseBroadcast({ type: 'message.new', contactId: contact.id, messageId: inserted.rows[0].id });
 
     return { message: inserted.rows[0] };
+  });
+
+  // ---------------------------------------------------------------------
+  // Voice notes (and other audio): multipart upload + send as WhatsApp audio.
+  // POST /api/messages/voice  (multipart)
+  //   fields: contact_id (required), whatsapp_number_id (optional override)
+  //   file:   audio/ogg, audio/mpeg, audio/aac, audio/amr (Meta-supported)
+  // ---------------------------------------------------------------------
+  app.post('/api/messages/voice', { preHandler: app.requireAuth }, async (req, reply) => {
+    type MultipartReq = typeof req & {
+      parts: () => AsyncIterable<{
+        type: 'file' | 'field';
+        fieldname: string;
+        filename?: string;
+        mimetype?: string;
+        toBuffer?: () => Promise<Buffer>;
+        value?: string;
+      }>;
+    };
+    let contactId: string | null = null;
+    let numberId: string | null = null;
+    let audio: { buffer: Buffer; mimetype: string; filename: string } | null = null;
+    for await (const part of (req as unknown as MultipartReq).parts()) {
+      if (part.type === 'field') {
+        if (part.fieldname === 'contact_id') contactId = String(part.value);
+        if (part.fieldname === 'whatsapp_number_id') numberId = String(part.value);
+      } else if (part.type === 'file' && part.toBuffer) {
+        const buf = await part.toBuffer();
+        audio = {
+          buffer: buf,
+          mimetype: part.mimetype ?? 'audio/ogg',
+          filename: part.filename ?? 'voice.ogg',
+        };
+      }
+    }
+    if (!contactId) { reply.code(400).send({ error: 'contact_id required' }); return reply; }
+    if (!audio) { reply.code(400).send({ error: 'no_audio' }); return reply; }
+    if (!(await canAccessContact(req.user!, contactId))) {
+      reply.code(403).send({ error: 'forbidden' }); return reply;
+    }
+
+    // Resolve brand
+    if (!numberId) {
+      const r = await query<{ whatsapp_number_id: string | null }>(
+        `SELECT whatsapp_number_id FROM leads
+          WHERE contact_id = $1 AND whatsapp_number_id IS NOT NULL
+          ORDER BY updated_at DESC LIMIT 1`,
+        [contactId]
+      );
+      numberId = r.rows[0]?.whatsapp_number_id ?? null;
+    }
+    const ctx = await getNumberContext(numberId);
+
+    // Persist the file (so the chat UI can replay it later).
+    const sha = createHash('sha256').update(audio.buffer).digest('hex');
+    const ext = mime.extension(audio.mimetype) || 'ogg';
+    const file = await query<{ id: string; wa_id: string }>(
+      `WITH c AS (SELECT wa_id FROM contacts WHERE id = $1)
+       INSERT INTO files (contact_id, mime_type, filename, size_bytes,
+                          storage_key, sha256, download_status)
+       VALUES ($1, $2, $3, $4, 'pending', $5, 'downloaded')
+       RETURNING id, (SELECT wa_id FROM c) AS wa_id`,
+      [contactId, audio.mimetype, audio.filename, audio.buffer.length, sha]
+    );
+    const fileId = file.rows[0].id;
+    const waId = file.rows[0].wa_id;
+    const key = `media/${contactId}/${fileId}.${ext}`;
+    await storage.put(key, audio.buffer, audio.mimetype);
+    await query(`UPDATE files SET storage_key = $1 WHERE id = $2`, [key, fileId]);
+
+    // Upload to Meta, then send by id
+    let waResponse;
+    try {
+      const up = await uploadMedia(audio.buffer, audio.mimetype, audio.filename, ctx);
+      waResponse = await sendMediaById(waId, up.id, 'audio', { ctx });
+    } catch (err: unknown) {
+      const e = err as { status?: number; body?: unknown };
+      reply.code(502).send({ error: 'whatsapp_api_error', detail: e.body ?? String(err) });
+      return reply;
+    }
+
+    const waMessageId = waResponse.messages?.[0]?.id;
+    const msg = await query(
+      `INSERT INTO messages
+         (contact_id, wa_message_id, direction, msg_type, body, file_id,
+          status, raw, whatsapp_number_id)
+       VALUES ($1, $2, 'out', 'audio', NULL, $3, 'sent', $4, $5)
+       RETURNING *`,
+      [contactId, waMessageId, fileId, waResponse, numberId]
+    );
+    await query(`UPDATE contacts SET last_outbound_at = NOW() WHERE id = $1`, [contactId]);
+    sseBroadcast({ type: 'message.new', contactId, messageId: msg.rows[0].id });
+    return { message: msg.rows[0] };
   });
 }

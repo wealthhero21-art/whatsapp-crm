@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/client.js';
 import { canAccessContact, contactScopeSql } from '../lib/scope.js';
+import { redactPhones, redactPhonesAll } from '../lib/redact.js';
 
 export async function registerContactRoutes(app: FastifyInstance) {
   app.get('/api/contacts', { preHandler: app.requireAuth }, async (req) => {
@@ -35,7 +36,7 @@ export async function registerContactRoutes(app: FastifyInstance) {
         LIMIT $${args.length}`,
       args
     );
-    return { contacts: rows };
+    return { contacts: redactPhonesAll(rows, req.user!.role) };
   });
 
   app.get('/api/contacts/:id', { preHandler: app.requireAuth }, async (req, reply) => {
@@ -45,7 +46,7 @@ export async function registerContactRoutes(app: FastifyInstance) {
     }
     const c = await query(`SELECT * FROM contacts WHERE id = $1`, [id]);
     if (c.rows.length === 0) { reply.code(404).send({ error: 'not found' }); return; }
-    return { contact: c.rows[0] };
+    return { contact: redactPhones(c.rows[0], req.user!.role) };
   });
 
   app.patch('/api/contacts/:id', { preHandler: app.requireAuth }, async (req, reply) => {
@@ -73,7 +74,7 @@ export async function registerContactRoutes(app: FastifyInstance) {
       `UPDATE contacts SET ${sets.join(', ')} WHERE id = $${args.length} RETURNING *`,
       args
     );
-    return { contact: rows[0] };
+    return { contact: redactPhones(rows[0], req.user!.role) };
   });
 
   app.post('/api/contacts/:id/read', { preHandler: app.requireAuth }, async (req, reply) => {

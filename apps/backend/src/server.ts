@@ -15,6 +15,8 @@ import { registerEventStream } from './routes/events.js';
 import { registerLeadRoutes } from './routes/leads.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerDocRoutes } from './routes/docs.js';
+import { registerSnippetRoutes } from './routes/snippets.js';
+import { registerNoteRoutes } from './routes/notes.js';
 import { startWorkers } from './lib/queue.js';
 import { startEventDispatch } from './events/dispatch.js';
 import { loadAdapters } from './integrations/index.js';
@@ -51,6 +53,8 @@ await registerTemplateRoutes(app);
 await registerLeadRoutes(app);
 await registerAdminRoutes(app);
 await registerDocRoutes(app);
+await registerSnippetRoutes(app);
+await registerNoteRoutes(app);
 
 // Wire the internal event bus to outbound webhooks + adapters
 startEventDispatch();

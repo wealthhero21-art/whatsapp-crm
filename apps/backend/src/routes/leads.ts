@@ -9,6 +9,7 @@ import { getAdapter } from '../integrations/registry.js';
 import { leadScopeSql, canAccessLead } from '../lib/scope.js';
 import { instantiateLeadSlots } from '../lib/docs.js';
 import { sendTemplateToLead } from '../whatsapp/outbound.js';
+import { redactPhones, redactPhonesAll } from '../lib/redact.js';
 import type { Lead, LeadStatus } from '@crm/shared';
 
 const STATUS_VALUES: LeadStatus[] = [
@@ -258,7 +259,7 @@ export async function registerLeadRoutes(app: FastifyInstance) {
         LIMIT $${args.length}`,
       args
     );
-    return { leads: rows };
+    return { leads: redactPhonesAll(rows, req.user!.role) };
   });
 
   app.get('/api/leads/:id', { preHandler: app.requireAuth }, async (req, reply) => {
@@ -279,7 +280,7 @@ export async function registerLeadRoutes(app: FastifyInstance) {
     if (!(await canAccessLead(req.user!, id))) {
       reply.code(403).send({ error: 'forbidden' }); return reply;
     }
-    return { lead };
+    return { lead: redactPhones(lead, req.user!.role) };
   });
 
   // Update status / metadata / product
@@ -326,7 +327,7 @@ export async function registerLeadRoutes(app: FastifyInstance) {
       emit('lead.status_changed', { lead_id: id, from: owner.rows[0].status, to: body.status });
     }
     emit('lead.updated', { lead_id: id, changes: body });
-    return { lead: rows[0] };
+    return { lead: redactPhones(rows[0], req.user!.role) };
   });
 
   // Manual assignment (admin only). Agents may "claim" via separate endpoint later.

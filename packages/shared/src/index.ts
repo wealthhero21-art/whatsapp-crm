@@ -116,6 +116,31 @@ export interface LeadDocSlot {
 }
 
 // ---------------------------------------------------------------------------
+// Quick replies + conversation notes
+// ---------------------------------------------------------------------------
+
+export interface QuickReply {
+  id: string;
+  user_id: string | null;     // null = team-wide
+  slug: string;
+  label: string;
+  body: string;
+  language: string;
+  created_at: string;
+}
+
+export interface ConversationNote {
+  id: string;
+  contact_id: string;
+  author_user_id: string | null;
+  author_name?: string | null;  // joined from users
+  body: string;
+  pinned: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // Integrations
 // ---------------------------------------------------------------------------
 
