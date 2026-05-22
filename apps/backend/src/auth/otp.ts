@@ -47,10 +47,13 @@ export async function issueOtp(phoneE164: string): Promise<{ sent: boolean; cool
     [phoneE164, codeHash, expiresAt]
   );
 
-  // Send via WhatsApp AUTHENTICATION template (body + copy-code button both
-  // carry the code). Template name/lang from env (otp_template / en_US).
+  // Send via WhatsApp AUTHENTICATION template. otp_template body is
+  // [code, purpose]; the copy-code button carries the code.
   const waId = phoneE164.replace(/^\+/, '');
-  await sendAuthTemplate(waId, config.OTP_TEMPLATE_NAME, config.OTP_TEMPLATE_LANGUAGE, code);
+  await sendAuthTemplate(waId, config.OTP_TEMPLATE_NAME, config.OTP_TEMPLATE_LANGUAGE, {
+    bodyParams: [code, config.OTP_TEMPLATE_PURPOSE],
+    buttonParam: code,
+  });
 
   return { sent: true };
 }

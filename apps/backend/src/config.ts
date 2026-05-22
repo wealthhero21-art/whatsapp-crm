@@ -23,6 +23,8 @@ const schema = z.object({
   // OTP login over WhatsApp
   OTP_TEMPLATE_NAME: z.string().default('login_otp'),
   OTP_TEMPLATE_LANGUAGE: z.string().default('en'),
+  // Second body variable of the otp_template ("...your OTP code for {{2}}").
+  OTP_TEMPLATE_PURPOSE: z.string().default('Login'),
   OTP_TTL_SECONDS: z.coerce.number().default(300),
   OTP_MAX_ATTEMPTS: z.coerce.number().default(5),
   OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().default(60),

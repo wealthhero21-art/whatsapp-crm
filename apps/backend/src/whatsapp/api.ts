@@ -114,15 +114,15 @@ export function sendTemplate(
   );
 }
 
-// Authentication-category templates with a "Copy code" / one-tap button need
-// the code passed BOTH in the body component and in the button component, or
-// Meta rejects the send (#132000 param mismatch). Use this for OTP sends.
+// Authentication-category templates with a "Copy code" button need the code
+// in the URL button component (#132000 if omitted). The body may have one or
+// more variables; for our `otp_template` it's [code, purpose]. Pass the full
+// body params array plus the button (copy-code) param explicitly.
 export function sendAuthTemplate(
   to: string,
   name: string,
   language: string,
-  code: string,
-  opts: { ctx?: WaContext | null } = {}
+  opts: { bodyParams: string[]; buttonParam: string; ctx?: WaContext | null }
 ) {
   return postMessages(
     {
@@ -132,12 +132,12 @@ export function sendAuthTemplate(
         name,
         language: { code: language },
         components: [
-          { type: 'body', parameters: [{ type: 'text', text: code }] },
+          { type: 'body', parameters: opts.bodyParams.map((text) => ({ type: 'text', text })) },
           {
             type: 'button',
             sub_type: 'url',
             index: '0',
-            parameters: [{ type: 'text', text: code }],
+            parameters: [{ type: 'text', text: opts.buttonParam }],
           },
         ],
       },
