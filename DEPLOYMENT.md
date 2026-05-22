@@ -34,10 +34,21 @@ and `/data/app-db-secrets/` on the server.
 
 ## Current state / caveats
 
-- **Login uses a DEV bypass.** `DEV_OTP_BYPASS_CODE=123456` is set in Coolify env so the admin can log in before Meta credentials exist. The backend logs a loud warning on boot while this is set. **Remove it once Meta creds are wired.**
-- **Meta WhatsApp creds are placeholders** (`WHATSAPP_TOKEN=placeholder…` etc). Real sending/receiving won't work until these are replaced and the `login_otp` template is approved.
-- **HTTPS pending** — running on the sslip.io HTTP URL until the `crm.maximoney.in` A record is added and the domain is set on the Coolify app (Traefik then auto-issues a Let's Encrypt cert).
-- **Offsite backups not yet wired** for this app's docs volume; shared Postgres has the nightly local dump.
+- **Real WhatsApp OTP login is LIVE.** Dev bypass removed. `otp_template` (en_US,
+  body params `[code, "Login"]` + copy-code button) sends via the Maximoney number.
+- **⚠️ The access token is a TEMPORARY 24-hour user token** (generated 2026-05-22
+  from the WhatsApp API Setup "Generate access token" flow). **It expires ~2026-05-23
+  and login/sending will break.** Replace `WHATSAPP_TOKEN` in Coolify with a
+  **permanent System-User token** before then: business.facebook.com → Settings →
+  Users → System users → add the app + Maximoney WABA assets → Generate token
+  (expiration: Never, scopes `whatsapp_business_messaging` + `whatsapp_business_management`).
+- **App Secret, Phone Number ID, WABA ID** all set from the real values.
+- **HTTPS live** at https://crm.maximoney.in (Let's Encrypt via Traefik).
+- **Webhook** — subscribe in Meta (WhatsApp → Configuration): callback
+  `https://crm.maximoney.in/webhook/whatsapp`, verify token `maximoney_wh_13f5b15d92a0dc8a`,
+  subscribe the `messages` field. Needed for inbound messages.
+- **Offsite backups not yet wired** for this app's docs volume; shared Postgres
+  has the nightly local dump.
 
 ## How to deploy a change
 
