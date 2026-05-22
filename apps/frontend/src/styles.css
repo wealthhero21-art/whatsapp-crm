@@ -947,3 +947,15 @@ body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-are
   margin-bottom: 8px;
 }
 .side nav a.nav-chats:hover { border-color: var(--accent); }
+
+/* === Customer details (enrichment) in chat profile === */
+.fp-enrich { padding: 0 16px 12px; }
+.enrich-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.enrich-table td { padding: 5px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+.enrich-table .ek {
+  color: var(--text-dim);
+  text-transform: capitalize;
+  width: 42%;
+  padding-right: 8px;
+}
+.enrich-table .ev { color: var(--text); word-break: break-word; }

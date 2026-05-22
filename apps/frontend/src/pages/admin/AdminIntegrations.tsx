@@ -71,15 +71,23 @@ function NewIntegrationForm({ onCreated }: { onCreated: () => void }) {
   const [slug, setSlug] = useState('');
   const [kind, setKind] = useState<IntegrationKind>('leads_inbound');
   const [baseUrl, setBaseUrl] = useState('');
+  const [lookupUrl, setLookupUrl] = useState('');
+  const [lookupAuth, setLookupAuth] = useState('');
   const [err, setErr] = useState<string | null>(null);
   return (
     <form className="card" onSubmit={async (e) => {
       e.preventDefault();
       try {
+        const config: Record<string, unknown> = {};
+        if (lookupUrl) {
+          config.customer_lookup_url = lookupUrl;
+          config.customer_lookup_method = lookupUrl.includes('{phone}') ? 'GET' : 'GET';
+          if (lookupAuth) config.customer_lookup_auth_header = lookupAuth;
+        }
         await api.admin.createIntegration({
-          name, slug, kind, base_url: baseUrl || undefined,
-        });
-        setName(''); setSlug(''); setBaseUrl(''); setErr(null);
+          name, slug, kind, base_url: baseUrl || undefined, config,
+        } as never);
+        setName(''); setSlug(''); setBaseUrl(''); setLookupUrl(''); setLookupAuth(''); setErr(null);
         onCreated();
       } catch (err: unknown) {
         setErr((err as Error).message);
@@ -88,11 +96,19 @@ function NewIntegrationForm({ onCreated }: { onCreated: () => void }) {
       <h3>Register integration</h3>
       <div className="row">
         <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required />
-        <input placeholder="slug (matches adapter dir)" pattern="[a-z0-9_-]+" value={slug} onChange={(e) => setSlug(e.target.value)} required />
+        <input placeholder="slug" pattern="[a-z0-9_-]+" value={slug} onChange={(e) => setSlug(e.target.value)} required />
         <select value={kind} onChange={(e) => setKind(e.target.value as IntegrationKind)}>
           {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
         </select>
         <input placeholder="Base URL (optional)" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+      </div>
+      <p className="muted" style={{ margin: '10px 0 4px' }}>
+        Realtime customer lookup (optional) — the CRM calls this when a new customer messages, to pull their details.
+        Use <code>{'{phone}'}</code> for the E.164 number.
+      </p>
+      <div className="row">
+        <input placeholder="https://app.maximoney.in/api/customer?phone={phone}" value={lookupUrl} onChange={(e) => setLookupUrl(e.target.value)} />
+        <input placeholder="Auth header (e.g. Bearer xxx) — optional" value={lookupAuth} onChange={(e) => setLookupAuth(e.target.value)} />
         <button type="submit">Add</button>
       </div>
       {err && <div className="err">{err}</div>}

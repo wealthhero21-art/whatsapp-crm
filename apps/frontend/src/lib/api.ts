@@ -53,6 +53,8 @@ export interface Contact {
   last_inbound_at: string | null;
   last_outbound_at: string | null;
   unread_count: number;
+  enrichment?: Record<string, unknown>;
+  enriched_at?: string | null;
 }
 
 export interface Message {
@@ -118,6 +120,8 @@ export const api = {
       method: 'PATCH', body: JSON.stringify(body),
     }).then((r) => r.contact),
   markRead: (id: string) => http(`/api/contacts/${id}/read`, { method: 'POST' }),
+  enrichContact: (id: string) =>
+    http<{ contact: Contact }>(`/api/contacts/${id}/enrich`, { method: 'POST' }).then((r) => r.contact),
   listMessages: (id: string) =>
     http<{ messages: Message[] }>(`/api/contacts/${id}/messages`).then((r) => r.messages),
   listFiles: (id: string) =>

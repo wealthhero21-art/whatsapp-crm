@@ -25,6 +25,11 @@ export function FilesPanel({ contactId }: Props) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['files', contactId] }),
   });
 
+  const enrich = useMutation({
+    mutationFn: () => api.enrichContact(contactId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['contact', contactId] }),
+  });
+
   const grouped = useMemo(() => groupByCategory(files), [files]);
 
   if (!contact) return <aside className="files-panel" />;
@@ -50,6 +55,13 @@ export function FilesPanel({ contactId }: Props) {
           )}
         </div>
       </div>
+
+      <CustomerDetails
+        enrichment={contact.enrichment ?? {}}
+        enrichedAt={contact.enriched_at ?? null}
+        onRefresh={() => enrich.mutate()}
+        refreshing={enrich.isPending}
+      />
 
       <div className="fp-section">Documents · {files.length}</div>
 
@@ -103,6 +115,50 @@ export function FilesPanel({ contactId }: Props) {
       </div>
       <NotesPanel contactId={contactId} />
     </aside>
+  );
+}
+
+function CustomerDetails({
+  enrichment, enrichedAt, onRefresh, refreshing,
+}: {
+  enrichment: Record<string, unknown>;
+  enrichedAt: string | null;
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
+  const entries = Object.entries(enrichment ?? {}).filter(([, v]) => v !== null && v !== '');
+  return (
+    <>
+      <div className="fp-section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>Customer details</span>
+        <button className="link" onClick={onRefresh} disabled={refreshing} style={{ fontSize: 11 }}>
+          {refreshing ? 'Fetching…' : '⟳ Refresh'}
+        </button>
+      </div>
+      <div className="fp-enrich">
+        {entries.length === 0 ? (
+          <div className="empty" style={{ padding: '10px 0', fontSize: 12 }}>
+            No external details yet. Configure a customer-lookup integration, or your app can push them.
+          </div>
+        ) : (
+          <table className="enrich-table">
+            <tbody>
+              {entries.map(([k, v]) => (
+                <tr key={k}>
+                  <td className="ek">{k.replace(/_/g, ' ')}</td>
+                  <td className="ev">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {enrichedAt && (
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 6 }}>
+            updated {formatTime(enrichedAt)}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 

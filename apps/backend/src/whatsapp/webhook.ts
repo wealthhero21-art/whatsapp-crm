@@ -16,6 +16,8 @@ import { query } from '../db/client.js';
 import { verifySignature } from './signature.js';
 import { mediaQueue } from '../lib/queue.js';
 import { sseBroadcast } from '../lib/sse.js';
+import { emit } from '../events/bus.js';
+import { enrichContact } from '../lib/enrichment.js';
 
 interface WaWebhookEntry {
   changes: Array<{
@@ -187,17 +189,24 @@ async function processWebhook(
 
 async function upsertContact(waId: string, profileName?: string) {
   const phoneE164 = waId.startsWith('+') ? waId : `+${waId}`;
-  const res = await query<{ id: string }>(
+  // xmax = '0' on a fresh INSERT; non-zero when the ON CONFLICT update path ran.
+  const res = await query<{ id: string; is_new: boolean }>(
     `INSERT INTO contacts (wa_id, phone_e164, profile_name, last_inbound_at, unread_count)
      VALUES ($1, $2, $3, NOW(), 1)
      ON CONFLICT (wa_id) DO UPDATE
        SET profile_name = COALESCE(EXCLUDED.profile_name, contacts.profile_name),
            last_inbound_at = NOW(),
            unread_count = contacts.unread_count + 1
-     RETURNING id`,
+     RETURNING id, (xmax = 0) AS is_new`,
     [waId, phoneE164, profileName ?? null]
   );
-  return res.rows[0].id;
+  const { id, is_new } = res.rows[0];
+  if (is_new) {
+    // New customer — notify downstream apps and trigger realtime enrichment.
+    emit('contact.created', { contact_id: id, phone_e164: phoneE164, profile_name: profileName ?? null });
+    void enrichContact(id, phoneE164);
+  }
+  return id;
 }
 
 async function handleInboundMessage(
