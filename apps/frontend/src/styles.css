@@ -938,3 +938,12 @@ body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-are
 .theme-toggle:hover { color: var(--text); border-color: var(--accent); }
 .login-card .theme-toggle { position: absolute; top: 16px; right: 16px; }
 .login-wrap { position: relative; }
+
+/* Prominent Chats link in admin nav */
+.side nav a.nav-chats {
+  background: var(--out-bubble);
+  color: var(--text);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.side nav a.nav-chats:hover { border-color: var(--accent); }

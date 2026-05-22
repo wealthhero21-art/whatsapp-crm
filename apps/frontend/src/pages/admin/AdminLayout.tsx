@@ -12,6 +12,8 @@ const navItems = [
   { to: 'audit', label: 'Audit' },
 ];
 
+// Absolute link straight to the chat inbox (admin sees all conversations there).
+
 export function AdminLayout() {
   const { user, logout } = useAuth();
   return (
@@ -19,12 +21,12 @@ export function AdminLayout() {
       <aside className="side">
         <div className="brand">CRM · Admin</div>
         <nav>
+          <NavLink to="/agent/inbox" className="nav-chats">💬 Chats</NavLink>
           {navItems.map((n) => (
             <NavLink key={n.to} to={n.to} className={({ isActive }) => isActive ? 'active' : ''}>
               {n.label}
             </NavLink>
           ))}
-          <NavLink to="/agent">Open inbox →</NavLink>
         </nav>
         <div className="me">
           <div>{user?.name}</div>
