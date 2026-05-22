@@ -15,8 +15,13 @@ and `/data/app-db-secrets/` on the server.
 | Application | `whatsapp-crm` — uuid `b245h6se6xsbefhgkgw1xj62` |
 | Build pack | docker-compose (`/docker-compose.coolify.yml`) |
 | Public-facing service / port | `frontend` (Caddy) on `8080` |
-| Temp URL | http://b245h6se6xsbefhgkgw1xj62.217.216.58.194.sslip.io |
-| Intended domain | `crm.maximoney.in` (Phase 7 — pending DNS) |
+| Live URL | https://crm.maximoney.in (Let's Encrypt cert via Traefik, HTTP→HTTPS redirect) |
+| Fallback URL | http://b245h6se6xsbefhgkgw1xj62.217.216.58.194.sslip.io |
+| Meta phone number ID | `1153735424485660` (+91 99584 21835, "Maximoney") |
+| Meta WABA ID | `1356965929592330` |
+| Meta business ID | `1242520374701030` |
+| OTP template | `otp_template` / `en_US` (AUTHENTICATION, copy-code button) |
+| Webhook verify token | `maximoney_wh_13f5b15d92a0dc8a` (paste into Meta webhook config) |
 | Database | `whatsapp_crm` on shared Postgres `tod9m3eq8aady2f9ar6z8ciy`; creds in `/data/app-db-secrets/whatsapp_crm.env` |
 | GitHub repo | https://github.com/wealthhero21-art/whatsapp-crm (currently public so Coolify can clone) |
 | Master admin | `+919716029574` (seeded) |
