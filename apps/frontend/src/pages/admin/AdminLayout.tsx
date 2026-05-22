@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
+import { ThemeToggle } from '../../components/ThemeToggle';
 
 const navItems = [
   { to: 'leads', label: 'Leads' },
@@ -27,9 +28,12 @@ export function AdminLayout() {
         </nav>
         <div className="me">
           <div>{user?.name}</div>
-          <button className="link" onClick={() => { logout(); location.href = '/login'; }}>
-            Sign out
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+            <ThemeToggle />
+            <button className="link" onClick={() => { logout(); location.href = '/login'; }}>
+              Sign out
+            </button>
+          </div>
         </div>
       </aside>
       <main className="content">

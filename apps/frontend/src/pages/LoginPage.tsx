@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../auth/AuthContext';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -40,6 +41,7 @@ export function LoginPage() {
   return (
     <div className="login-wrap">
       <div className="login-card">
+        <ThemeToggle compact />
         <h1>WhatsApp CRM</h1>
         <p className="muted">
           Sign in with the WhatsApp number registered as a CRM user.

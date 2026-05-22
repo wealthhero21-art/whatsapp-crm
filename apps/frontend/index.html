@@ -18,6 +18,15 @@
       rel="stylesheet"
     />
     <title>DSA Inbox · WhatsApp CRM</title>
+    <script>
+      // Apply saved theme before first paint to avoid a flash.
+      (function () {
+        try {
+          var t = localStorage.getItem('crm.theme') || 'dark';
+          if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
