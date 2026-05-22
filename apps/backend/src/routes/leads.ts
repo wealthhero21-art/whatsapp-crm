@@ -36,6 +36,9 @@ const ingestSchema = z.object({
   product: z.string().optional(),
   amount: z.number().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
+  // Customer details to show in the chat's "Customer details" panel
+  // (KYC, bureau score, app profile, etc.). Merged into contacts.enrichment.
+  customer: z.record(z.unknown()).optional(),
 });
 
 export async function registerLeadRoutes(app: FastifyInstance) {
@@ -123,17 +126,20 @@ export async function registerLeadRoutes(app: FastifyInstance) {
       }
       const effectiveProduct = product ?? sourceDefaultProduct;
 
-      const { leadId, wasNew } = await withTx(async (client) => {
-        // Upsert contact
+      const { leadId, contactId, wasNew } = await withTx(async (client) => {
+        // Upsert contact, and merge customer details into enrichment in one go.
         const c = await client.query<{ id: string }>(
-          `INSERT INTO contacts (wa_id, phone_e164, profile_name)
-           VALUES ($1, $2, $3)
+          `INSERT INTO contacts (wa_id, phone_e164, profile_name, display_name, enrichment, enriched_at)
+           VALUES ($1, $2, $3, $4, $5::jsonb, CASE WHEN $5::jsonb <> '{}'::jsonb THEN NOW() ELSE NULL END)
            ON CONFLICT (wa_id) DO UPDATE
-             SET profile_name = COALESCE(EXCLUDED.profile_name, contacts.profile_name)
+             SET profile_name = COALESCE(EXCLUDED.profile_name, contacts.profile_name),
+                 display_name = COALESCE(EXCLUDED.display_name, contacts.display_name),
+                 enrichment   = contacts.enrichment || $5::jsonb,
+                 enriched_at  = CASE WHEN $5::jsonb <> '{}'::jsonb THEN NOW() ELSE contacts.enriched_at END
            RETURNING id`,
-          [waId, phoneE164, contactName ?? null]
+          [waId, phoneE164, contactName ?? null, contactName ?? null, JSON.stringify(body.customer ?? {})]
         );
-        const contactId = c.rows[0].id;
+        const cid = c.rows[0].id;
 
         // Insert lead — dedupe on (source_id, source_ref) via partial unique idx
         const l = await client.query<{ id: string; xmax: string }>(
@@ -142,11 +148,15 @@ export async function registerLeadRoutes(app: FastifyInstance) {
            ON CONFLICT (source_id, source_ref) WHERE source_ref IS NOT NULL
            DO UPDATE SET metadata = leads.metadata || EXCLUDED.metadata
            RETURNING id, xmax::text`,
-          [contactId, sourceId, sourceRef, effectiveProduct, amount, metadata, sourceWaNumberId]
+          [cid, sourceId, sourceRef, effectiveProduct, amount, metadata, sourceWaNumberId]
         );
         // xmax = '0' on a fresh insert; non-zero on UPDATE conflict path.
-        return { leadId: l.rows[0].id, wasNew: l.rows[0].xmax === '0' };
+        return { leadId: l.rows[0].id, contactId: cid, wasNew: l.rows[0].xmax === '0' };
       });
+
+      if (body.customer && Object.keys(body.customer).length > 0) {
+        emit('contact.enriched', { contact_id: contactId, source: 'send_to_crm' });
+      }
 
       // First time we've seen this lead — instantiate the doc checklist
       // and fire the source's welcome template (fire-and-forget).
