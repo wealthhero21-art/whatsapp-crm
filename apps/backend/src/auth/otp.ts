@@ -1,7 +1,7 @@
 import { randomInt, createHash } from 'node:crypto';
 import { query } from '../db/client.js';
 import { config } from '../config.js';
-import { sendTemplate } from '../whatsapp/api.js';
+import { sendAuthTemplate } from '../whatsapp/api.js';
 
 function hashCode(code: string): string {
   return createHash('sha256').update(code + config.JWT_SECRET).digest('hex');
@@ -47,11 +47,10 @@ export async function issueOtp(phoneE164: string): Promise<{ sent: boolean; cool
     [phoneE164, codeHash, expiresAt]
   );
 
-  // Send via WhatsApp authentication template.
-  // Template must have a single body parameter for the OTP code.
-  // See SETUP_META.md — create a category=AUTHENTICATION template named OTP_TEMPLATE_NAME.
+  // Send via WhatsApp AUTHENTICATION template (body + copy-code button both
+  // carry the code). Template name/lang from env (otp_template / en_US).
   const waId = phoneE164.replace(/^\+/, '');
-  await sendTemplate(waId, config.OTP_TEMPLATE_NAME, config.OTP_TEMPLATE_LANGUAGE, [code]);
+  await sendAuthTemplate(waId, config.OTP_TEMPLATE_NAME, config.OTP_TEMPLATE_LANGUAGE, code);
 
   return { sent: true };
 }

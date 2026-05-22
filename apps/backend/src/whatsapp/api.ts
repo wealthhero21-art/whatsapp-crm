@@ -114,6 +114,38 @@ export function sendTemplate(
   );
 }
 
+// Authentication-category templates with a "Copy code" / one-tap button need
+// the code passed BOTH in the body component and in the button component, or
+// Meta rejects the send (#132000 param mismatch). Use this for OTP sends.
+export function sendAuthTemplate(
+  to: string,
+  name: string,
+  language: string,
+  code: string,
+  opts: { ctx?: WaContext | null } = {}
+) {
+  return postMessages(
+    {
+      to,
+      type: 'template',
+      template: {
+        name,
+        language: { code: language },
+        components: [
+          { type: 'body', parameters: [{ type: 'text', text: code }] },
+          {
+            type: 'button',
+            sub_type: 'url',
+            index: '0',
+            parameters: [{ type: 'text', text: code }],
+          },
+        ],
+      },
+    },
+    opts.ctx
+  );
+}
+
 // Upload bytes to Meta's media endpoint and return the media_id.
 // Required as the first step before sending audio/image/video/document by id.
 export async function uploadMedia(
