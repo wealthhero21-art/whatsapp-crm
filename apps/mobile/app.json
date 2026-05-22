@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Maximoney CRM",
+    "slug": "maximoney-crm",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "maximoneycrm",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0f1213"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "in.maximoney.crm",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Record voice notes to send to customers on WhatsApp."
+      }
+    },
+    "android": {
+      "package": "in.maximoney.crm",
+      "permissions": ["RECORD_AUDIO"]
+    },
+    "extra": {
+      "apiBaseUrl": "http://b245h6se6xsbefhgkgw1xj62.217.216.58.194.sslip.io"
+    }
+  }
+}

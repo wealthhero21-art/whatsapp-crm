@@ -1,0 +1,12 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "jsx": "react-jsx",
+    "moduleResolution": "Bundler",
+    "paths": {
+      "@crm/shared": ["../../packages/shared/src/index.ts"]
+    }
+  },
+  "include": ["src", "index.ts", "App.tsx", "../../packages/shared/src"]
+}
