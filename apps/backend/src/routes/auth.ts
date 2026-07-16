@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query } from '../db/client.js';
 import { issueOtp, verifyOtp } from '../auth/otp.js';
 import { signSession } from '../auth/jwt.js';
+import { config } from '../config.js';
 import type { User } from '@crm/shared';
 
 function normalisePhone(input: string): string {
@@ -83,5 +84,47 @@ export async function registerAuthRoutes(app: FastifyInstance) {
   // ---- Logout (client just drops the token; this is a no-op stub for future server-side revoke) ----
   app.post('/auth/logout', { preHandler: app.requireAuth }, async () => {
     return { ok: true };
+  });
+
+  // ---- Public dev-mode flag so the login screen can render the quick-login button ----
+  app.get('/auth/dev-mode', async () => {
+    return { dev: Boolean(config.DEV_OTP_BYPASS_CODE) };
+  });
+
+  // ---- Dev quick-login: skip phone + OTP entirely, issue a JWT for an admin.
+  // Guarded by DEV_OTP_BYPASS_CODE — same guard as the OTP code bypass, so no
+  // new security surface. Returns 404 in real prod (bypass unset).
+  app.post('/auth/dev-login', async (req, reply) => {
+    if (!config.DEV_OTP_BYPASS_CODE) {
+      reply.code(404).send({ error: 'not_found' });
+      return reply;
+    }
+    const body = z.object({ phone: z.string().optional() }).parse(req.body ?? {});
+    let user: User | undefined;
+    if (body.phone) {
+      const phone = normalisePhone(body.phone);
+      const r = await query<User>(
+        `SELECT id, phone_e164, name, email, role, active, created_at
+           FROM users WHERE phone_e164 = $1 AND active = TRUE`,
+        [phone]
+      );
+      user = r.rows[0];
+    } else {
+      // Default: pick the first active admin (typically the seeded master admin).
+      const r = await query<User>(
+        `SELECT id, phone_e164, name, email, role, active, created_at
+           FROM users WHERE role = 'admin' AND active = TRUE
+           ORDER BY created_at ASC LIMIT 1`
+      );
+      user = r.rows[0];
+    }
+    if (!user) {
+      reply.code(404).send({ error: 'no_admin' });
+      return reply;
+    }
+    await query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
+    const session = signSession({ sub: user.id, role: user.role, phone: user.phone_e164 });
+    req.log.warn({ user_id: user.id }, '⚠️  dev-login used (bypasses OTP)');
+    return { token: session.token, expires_at: session.expires_at, user };
   });
 }

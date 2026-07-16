@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../auth/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -10,6 +10,23 @@ export function LoginPage() {
   const [code, setCode] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [devMode, setDevMode] = useState(false);
+
+  useEffect(() => {
+    api.devMode().then((r) => setDevMode(r.dev)).catch(() => {});
+  }, []);
+
+  async function devLogin() {
+    setBusy(true); setErr(null);
+    try {
+      const { token, user } = await api.devLogin(phone.trim() || undefined);
+      login(token, user);
+      location.href = user.role === 'admin' ? '/admin' : '/agent';
+    } catch (e: unknown) {
+      setErr((e as Error).message || 'Dev login failed');
+      setBusy(false);
+    }
+  }
 
   async function requestOtp(e: React.FormEvent) {
     e.preventDefault();
@@ -88,6 +105,17 @@ export function LoginPage() {
           </form>
         )}
         {err && <div className="err">{err}</div>}
+
+        {devMode && (
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px dashed var(--border)' }}>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+              🔓 Dev mode — skip OTP entirely
+            </div>
+            <button type="button" onClick={devLogin} disabled={busy} style={{ width: '100%' }}>
+              {busy ? 'Signing in…' : 'Skip OTP · Log in as Master Admin'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -107,6 +107,11 @@ export const api = {
     http<{ token: string; expires_at: string; user: User }>(`/auth/otp/verify`, {
       method: 'POST', body: JSON.stringify({ phone, code }),
     }),
+  devMode: () => http<{ dev: boolean }>(`/auth/dev-mode`),
+  devLogin: (phone?: string) =>
+    http<{ token: string; expires_at: string; user: User }>(`/auth/dev-login`, {
+      method: 'POST', body: JSON.stringify({ phone }),
+    }),
 
   // ----- Contacts / Messages / Files / Templates (chat UI) -----
   listContacts: (search?: string) =>
